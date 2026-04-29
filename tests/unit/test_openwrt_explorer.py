@@ -4,7 +4,8 @@ import re
 from datetime import datetime
 from typing import Dict, Any, List
 import pytest
-from tools.openwrt_explorer import OpenWRTExplorer, SecurityValidator
+from unittest.mock import MagicMock, AsyncMock, patch
+from tools.openwrt_explorer import OpenWRTExplorer, SecurityValidator, SSHConnection, get_explorer
 
 
 class TestSecurityValidator:
@@ -388,3 +389,307 @@ class TestResponseValidation:
         assert "tests" in data
         assert "summary" in data
         assert "health" in data["summary"]
+
+
+class TestSSHConnection:
+    """Tests for SSHConnection class."""
+
+    @pytest.mark.asyncio
+    async def test_connect_success(self, mock_openwrt_ssh):
+        """SSH connection should succeed with valid key."""
+        conn = SSHConnection()
+        result = await conn.connect()
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_connect_failure_no_auth(self, mock_openwrt_ssh):
+        """SSH connection should fail when no key or password available."""
+        from unittest.mock import patch
+        with patch.dict("os.environ", {
+            "OPENWRT_SSH_KEY": "/nonexistent/key",
+            "OPENWRT_PASSWORD": "",
+        }):
+            with patch("pathlib.Path.exists", return_value=False):
+                conn = SSHConnection()
+                result = await conn.connect()
+                assert result is False
+
+    @pytest.mark.asyncio
+    async def test_execute_security_denial(self, mock_openwrt_ssh):
+        """Execute should block non-whitelisted commands."""
+        conn = SSHConnection()
+        await conn.connect()
+        stdout, stderr, code = await conn.execute("rm -rf /")
+        assert code == 1
+        assert "Security denial" in stderr
+
+    @pytest.mark.asyncio
+    async def test_execute_success(self, mock_openwrt_ssh):
+        """Execute should return output for valid commands."""
+        conn = SSHConnection()
+        await conn.connect()
+        stdout, stderr, code = await conn.execute("ubus call system board")
+        assert code == 0
+        assert "model" in stdout
+
+    @pytest.mark.asyncio
+    async def test_execute_no_connection(self, mock_openwrt_ssh):
+        """Execute should fail gracefully when not connected."""
+        from unittest.mock import patch
+        with patch("asyncssh.connect", side_effect=Exception("Connection refused")):
+            conn = SSHConnection()
+            stdout, stderr, code = await conn.execute("ubus call system board")
+            assert code == 1
+            assert "No SSH connection" in stderr or "Connection refused" in stderr
+
+    @pytest.mark.asyncio
+    async def test_execute_reconnect(self, mock_openwrt_ssh):
+        """Execute should reconnect on ConnectionLost and retry."""
+        import asyncssh
+        conn = SSHConnection()
+        await conn.connect()
+        call_count = 0
+        original = conn._connection.run
+        async def fail_once(cmd, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise asyncssh.ConnectionLost("Connection lost")
+            return await original(cmd, **kwargs)
+        conn._connection.run = fail_once
+        stdout, stderr, code = await conn.execute("ubus call system board")
+        assert code == 0
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_reconnect_fails(self, mock_openwrt_ssh):
+        """Execute should report failure when reconnect fails."""
+        import asyncssh
+        from unittest.mock import patch
+        conn = SSHConnection()
+        await conn.connect()
+        async def always_fail(cmd, **kwargs):
+            raise asyncssh.ConnectionLost("Connection lost")
+        conn._connection.run = always_fail
+        with patch.object(conn, 'connect', return_value=False):
+            stdout, stderr, code = await conn.execute("ubus call system board")
+            assert code == 1
+            assert "Failed to re-establish" in stderr
+
+    @pytest.mark.asyncio
+    async def test_audit_logging(self, mock_openwrt_ssh, tmp_path):
+        """Audit log should be written for executed commands."""
+        from unittest.mock import patch
+        import tools.openwrt_explorer as oxe
+        log_file = tmp_path / "audit.log"
+        with patch.object(oxe, 'AUDIT_LOG_FILE', str(log_file)):
+            conn = SSHConnection()
+            await conn.connect()
+            stdout, stderr, code = await conn.execute("ubus call system board")
+            assert code == 0
+            assert log_file.exists()
+            content = log_file.read_text()
+            assert "ubus call system board" in content
+
+    @pytest.mark.asyncio
+    async def test_close(self, mock_openwrt_ssh):
+        """Close should clean up connection."""
+        conn = SSHConnection()
+        await conn.connect()
+        await conn.close()
+        assert conn._connection is None
+
+
+class TestOpenWRTExplorerEdgeCases:
+    """Edge case tests for OpenWRTExplorer."""
+
+    @pytest.mark.asyncio
+    async def test_test_connection_failure(self, mock_openwrt_ssh):
+        """test_connection should report failure when SSH fails."""
+        from unittest.mock import patch
+        with patch("asyncssh.connect", side_effect=Exception("Timeout")):
+            explorer = OpenWRTExplorer()
+            result = await explorer.test_connection()
+            assert result["success"] is False
+            assert result["status"] == "disconnected"
+
+    @pytest.mark.asyncio
+    async def test_test_connection_unresponsive(self, mock_openwrt_ssh):
+        """test_connection should report unresponsive when board command fails."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original_run = explorer.ssh._connection.run
+        async def fail_board(cmd, **kwargs):
+            if "system board" in cmd:
+                return MagicMock(stdout="", stderr="timeout", exit_status=1)
+            return await original_run(cmd, **kwargs)
+        explorer.ssh._connection.run = fail_board
+        result = await explorer.test_connection()
+        assert result["success"] is False
+        assert result["status"] == "unresponsive"
+
+    @pytest.mark.asyncio
+    async def test_get_system_info_invalid_json(self, mock_openwrt_ssh):
+        """get_system_info should handle invalid JSON from board."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original = explorer.ssh.execute
+        async def bad_json(cmd):
+            if "system board" in cmd:
+                return "not json", "", 0
+            return await original(cmd)
+        explorer.ssh.execute = bad_json
+        result = await explorer.get_system_info()
+        assert result["success"] is False
+        assert "Invalid JSON" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_wifi_status_parse_error(self, mock_openwrt_ssh):
+        """get_wifi_status should handle malformed wireless data."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original = explorer.ssh.execute
+        async def bad_wifi(cmd):
+            if "network.wireless status" in cmd:
+                return "not json", "", 0
+            return await original(cmd)
+        explorer.ssh.execute = bad_wifi
+        result = await explorer.get_wifi_status()
+        assert result["success"] is False
+        assert "Parse error" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_firewall_rules_none_found(self, mock_openwrt_ssh):
+        """get_firewall_rules should report when no firewall is found."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original = explorer.ssh.execute
+        async def no_firewall(cmd):
+            if "nft" in cmd or "fw4" in cmd or "iptables" in cmd:
+                return "", "not found", 1
+            return await original(cmd)
+        explorer.ssh.execute = no_firewall
+        result = await explorer.get_firewall_rules()
+        assert result["success"] is False
+        assert "No supported firewall" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_read_uci_config_invalid_name(self, mock_openwrt_ssh):
+        """read_uci_config should reject invalid config names."""
+        explorer = OpenWRTExplorer()
+        result = await explorer.read_uci_config("../../etc/passwd")
+        assert result["success"] is False
+        assert "Invalid configuration name" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_list_installed_packages_no_version(self, mock_openwrt_ssh):
+        """list_installed_packages should handle lines without version."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original = explorer.ssh.execute
+        async def no_version(cmd):
+            if "opkg list-installed" in cmd:
+                return "package-without-version-line\nanother", "", 0
+            return await original(cmd)
+        explorer.ssh.execute = no_version
+        result = await explorer.list_installed_packages()
+        assert result["success"] is True
+        assert result["packages_count"] > 0
+
+    @pytest.mark.asyncio
+    async def test_get_router_logs_filtered(self, mock_openwrt_ssh):
+        """get_router_logs should filter by level."""
+        explorer = OpenWRTExplorer()
+        result = await explorer.get_router_logs(lines=50, filter_level="dnsmasq")
+        assert result["success"] is True
+        assert "lines_count" in result
+
+    @pytest.mark.asyncio
+    async def test_search_router_logs_logread_fails(self, mock_openwrt_ssh):
+        """search_router_logs should handle logread failure."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original = explorer.ssh.execute
+        async def fail_logread(cmd):
+            if "logread" in cmd:
+                return "", "logread not found", 127
+            return await original(cmd)
+        explorer.ssh.execute = fail_logread
+        result = await explorer.search_router_logs(search_term="dhcp")
+        assert result["success"] is False
+        assert "logread not found" in result["error"] or "Failed to fetch logs" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_diagnose_router_connectivity_no_default_route(self, mock_openwrt_ssh):
+        """diagnose_router_connectivity should use fallback gateway."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original = explorer.ssh.execute
+        async def no_route(cmd):
+            if "ip route show" in cmd:
+                return "", "", 0
+            return await original(cmd)
+        explorer.ssh.execute = no_route
+        result = await explorer.diagnose_router_connectivity()
+        assert result["success"] is True
+        assert "gateway" in result["tests"]
+
+    @pytest.mark.asyncio
+    async def test_get_dhcp_static_leases_failure(self, mock_openwrt_ssh):
+        """get_dhcp_static_leases should handle uci show failure."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original = explorer.ssh.execute
+        async def fail_uci(cmd):
+            if "uci show dhcp" in cmd:
+                return "", "uci not found", 127
+            return await original(cmd)
+        explorer.ssh.execute = fail_uci
+        result = await explorer.get_dhcp_static_leases()
+        assert result["success"] is False
+        assert "Failed to fetch" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_search_dhcp_logs_logread_fails(self, mock_openwrt_ssh):
+        """search_dhcp_logs should handle logread failure."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original = explorer.ssh.execute
+        async def fail_logread(cmd):
+            if "logread" in cmd:
+                return "", "logread not found", 127
+            return await original(cmd)
+        explorer.ssh.execute = fail_logread
+        result = await explorer.search_dhcp_logs(search_term="dhcp")
+        assert result["success"] is False
+        assert "Failed to fetch logs" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_device_dhcp_details_leases_fail(self, mock_openwrt_ssh):
+        """get_device_dhcp_details should handle leases query failure."""
+        explorer = OpenWRTExplorer()
+        await explorer.test_connection()  # establish connection first
+        original = explorer.ssh.execute
+        async def fail_leases(cmd):
+            if "dhcp.leases" in cmd:
+                return "", "no file", 1
+            return await original(cmd)
+        explorer.ssh.execute = fail_leases
+        result = await explorer.get_device_dhcp_details(mac_address="aa:bb:cc:dd:ee:01")
+        assert result["success"] is True  # Still returns structure even if lease missing
+        assert result["is_currently_connected"] is False
+
+
+class TestServerHelpers:
+    """Tests for server helper functions."""
+
+    def test_get_explorer_singleton(self):
+        """get_explorer should return the same instance."""
+        e1 = get_explorer()
+        e2 = get_explorer()
+        assert e1 is e2
+
+    def test_get_explorer_is_openwrt_explorer(self):
+        """get_explorer should return an OpenWRTExplorer."""
+        explorer = get_explorer()
+        assert isinstance(explorer, OpenWRTExplorer)

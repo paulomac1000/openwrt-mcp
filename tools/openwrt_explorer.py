@@ -926,12 +926,12 @@ def register_openwrt_tools(mcp):
         
     @mcp.tool()
     async def get_dhcp_static_leases() -> str:
-        """fetches statyczne rezerwacje DHCP."""
+        """Fetch static DHCP reservations."""
         return json.dumps(await get_explorer().get_dhcp_static_leases(), indent=2, ensure_ascii=False)
         
     @mcp.tool()
     async def search_dhcp_logs(search_term: str, hours_back: int = 24) -> str:
-        """searches events DHCP w logach."""
+        """Search DHCP events in router logs."""
         return json.dumps(await get_explorer().search_dhcp_logs(search_term, hours_back), indent=2, ensure_ascii=False)
         
     @mcp.tool()
