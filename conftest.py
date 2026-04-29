@@ -8,39 +8,43 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 
 # Mock data for OpenWRT responses
-MOCK_BOARD_JSON = json.dumps({
-    "model": {"id": "xiaomi,ax3600", "name": "Xiaomi AX3600"},
-    "system": "Qualcomm Atheros QCA9860",
-    "hostname": "OpenWrt",
-    "release": {
-        "distribution": "OpenWrt",
-        "version": "23.05.3",
-        "revision": "r23809-234f1a2b3c",
-        "target": "ipq807x/generic",
-        "description": "OpenWrt 23.05.3 r23809-234f1a2b3c"
-    },
-    "kernel": "5.15.150"
-})
+MOCK_BOARD_JSON = json.dumps(
+    {
+        "model": {"id": "xiaomi,ax3600", "name": "Xiaomi AX3600"},
+        "system": "Qualcomm Atheros QCA9860",
+        "hostname": "OpenWrt",
+        "release": {
+            "distribution": "OpenWrt",
+            "version": "23.05.3",
+            "revision": "r23809-234f1a2b3c",
+            "target": "ipq807x/generic",
+            "description": "OpenWrt 23.05.3 r23809-234f1a2b3c",
+        },
+        "kernel": "5.15.150",
+    }
+)
 
 MOCK_DHCP_LEASES = """1770185708 de:ad:be:ef:00:01 192.168.0.193 * 01:de:ad:be:ef:00:01
 1770196154 de:ad:be:ef:00:02 192.168.0.126 test-device 01:de:ad:be:ef:00:02
 1770185000 de:ad:be:ef:00:03 192.168.0.10 device1 01:de:ad:be:ef:00:03
 """
 
-MOCK_WIRELESS_STATUS = json.dumps({
-    "radio0": {
-        "interfaces": [
-            {
-                "type": "ap",
-                "config": {"ssid": "MyNetwork", "mode": "ap"},
-                "ifname": "wlan0",
-                "stations": [
-                    {"mac": "de:ad:be:ef:00:03", "signal": -45, "inactive": 120}
-                ]
-            }
-        ]
+MOCK_WIRELESS_STATUS = json.dumps(
+    {
+        "radio0": {
+            "interfaces": [
+                {
+                    "type": "ap",
+                    "config": {"ssid": "MyNetwork", "mode": "ap"},
+                    "ifname": "wlan0",
+                    "stations": [
+                        {"mac": "de:ad:be:ef:00:03", "signal": -45, "inactive": 120}
+                    ],
+                }
+            ]
+        }
     }
-})
+)
 
 MOCK_UPTIME = """1776951.23 1776951.23
 """
@@ -57,6 +61,7 @@ MOCK_LOADAVG = """0.45 0.32 0.28 2/234 12345
 
 def _make_run_mock():
     """Create a run mock that returns different outputs per command."""
+
     async def run_side_effect(cmd, **kwargs):
         stdout = ""
         stderr = ""
@@ -104,11 +109,14 @@ def mock_openwrt_ssh():
 @pytest.fixture
 def openwrt_env():
     """Set OpenWRT environment variables."""
-    with patch.dict("os.environ", {
-        "OPENWRT_HOST": "192.168.0.200",
-        "OPENWRT_USER": "root",
-        "OPENWRT_SSH_KEY": "/app/keys/test_key"
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "OPENWRT_HOST": "192.168.0.200",
+            "OPENWRT_USER": "root",
+            "OPENWRT_SSH_KEY": "/app/keys/test_key",
+        },
+    ):
         yield
 
 
@@ -132,17 +140,40 @@ def openwrt_test_data():
             "success": True,
             "leases_count": 3,
             "leases": [
-                {"expires_at": "2026-04-23T10:00:00", "mac": "22:28:4d:03:23:0c", "ip": "192.168.0.193", "hostname": None},
-                {"expires_at": "2026-04-23T10:00:00", "mac": "dc:c6:02:db:3e:d7", "ip": "192.168.0.126", "hostname": "iPhone"},
-                {"expires_at": "2026-04-23T10:00:00", "mac": "aa:bb:cc:dd:ee:01", "ip": "192.168.0.10", "hostname": "device1"},
-            ]
+                {
+                    "expires_at": "2026-04-23T10:00:00",
+                    "mac": "22:28:4d:03:23:0c",
+                    "ip": "192.168.0.193",
+                    "hostname": None,
+                },
+                {
+                    "expires_at": "2026-04-23T10:00:00",
+                    "mac": "dc:c6:02:db:3e:d7",
+                    "ip": "192.168.0.126",
+                    "hostname": "iPhone",
+                },
+                {
+                    "expires_at": "2026-04-23T10:00:00",
+                    "mac": "aa:bb:cc:dd:ee:01",
+                    "ip": "192.168.0.10",
+                    "hostname": "device1",
+                },
+            ],
         },
         "diagnose_router_connectivity": {
             "success": True,
             "tests": {
-                "internet": {"success": True, "latency_ms": 15.2, "details": "8.8.8.8 reachable"},
-                "dns": {"success": True, "latency_ms": 5.0, "details": "DNS resolution works"},
+                "internet": {
+                    "success": True,
+                    "latency_ms": 15.2,
+                    "details": "8.8.8.8 reachable",
+                },
+                "dns": {
+                    "success": True,
+                    "latency_ms": 5.0,
+                    "details": "DNS resolution works",
+                },
             },
             "summary": "all_passed - health check passed",
-        }
+        },
     }

@@ -1,11 +1,13 @@
 """Unit tests for OpenWRT Explorer with mocked SSH responses."""
-import json
-import re
-from datetime import datetime
-from typing import Dict, Any, List
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from tools.openwrt_explorer import OpenWRTExplorer, SecurityValidator, SSHConnection, get_explorer
+from unittest.mock import MagicMock
+from tools.openwrt_explorer import (
+    OpenWRTExplorer,
+    SecurityValidator,
+    SSHConnection,
+    get_explorer,
+)
 
 
 class TestSecurityValidator:
@@ -28,7 +30,7 @@ class TestSecurityValidator:
             "ping -c 2 -W 2 8.8.8.8",
             "ip route show",
         ]
-        
+
         for cmd in allowed_commands:
             is_valid, msg = SecurityValidator.validate_command(cmd)
             assert is_valid, f"Command should be allowed: {cmd} ({msg})"
@@ -45,7 +47,7 @@ class TestSecurityValidator:
             "echo test > /etc/config/system",
             "dd if=/dev/zero of=/dev/sda",
         ]
-        
+
         for cmd in dangerous_commands:
             is_valid, msg = SecurityValidator.validate_command(cmd)
             assert not is_valid, f"Command should be blocked: {cmd}"
@@ -61,7 +63,7 @@ class TestSecurityValidator:
             "cat /tmp/`id`",
             "ping -c 1 8.8.8.8; rm -rf /",
         ]
-        
+
         for cmd in injection_attempts:
             is_valid, msg = SecurityValidator.validate_command(cmd)
             assert not is_valid, f"Command injection should be blocked: {cmd}"
@@ -70,11 +72,13 @@ class TestSecurityValidator:
         """Dangerous characters are sanitized from commands."""
         dangerous_input = "logread; rm -rf / && reboot | sh $(cat /etc/passwd)"
         sanitized = SecurityValidator.sanitize_command(dangerous_input)
-        
+
         # Verify that ALL dangerous characters are removed
-        dangerous_chars = [';', '&', '|', '$', '(', ')', '<', '>', '`', '{', '}']
+        dangerous_chars = [";", "&", "|", "$", "(", ")", "<", ">", "`", "{", "}"]
         for char in dangerous_chars:
-            assert char not in sanitized, f"Dangerous character '{char}' should be removed"
+            assert char not in sanitized, (
+                f"Dangerous character '{char}' should be removed"
+            )
 
         # Verify sanitized output retains safe words
         assert "logread" in sanitized
@@ -82,13 +86,29 @@ class TestSecurityValidator:
 
     def test_safe_search_term_validation(self):
         """Validate safe and unsafe search terms."""
-        safe_terms = ["dhcp", "192.168.0.1", "aa:bb:cc:dd:ee:ff", "device_name", "test-term"]
+        safe_terms = [
+            "dhcp",
+            "192.168.0.1",
+            "aa:bb:cc:dd:ee:ff",
+            "device_name",
+            "test-term",
+        ]
         for term in safe_terms:
-            assert SecurityValidator.is_safe_search_term(term), f"'{term}' should be safe"
+            assert SecurityValidator.is_safe_search_term(term), (
+                f"'{term}' should be safe"
+            )
 
-        dangerous_terms = ["; rm -rf /", "$(cat /etc/passwd)", "`id`", "test|grep", "a" * 150]
+        dangerous_terms = [
+            "; rm -rf /",
+            "$(cat /etc/passwd)",
+            "`id`",
+            "test|grep",
+            "a" * 150,
+        ]
         for term in dangerous_terms:
-            assert not SecurityValidator.is_safe_search_term(term), f"'{term}' should be blocked"
+            assert not SecurityValidator.is_safe_search_term(term), (
+                f"'{term}' should be blocked"
+            )
 
     def test_validate_empty_command(self):
         """Empty or non-string command → validation failure."""
@@ -128,7 +148,7 @@ class TestOpenWRTExplorerMethods:
         """Test router connection – validate response schema."""
         explorer = OpenWRTExplorer()
         result = await explorer.test_connection()
-        
+
         # Validate response schema
         assert result["success"] is True
         assert result["status"] == "connected"
@@ -141,25 +161,31 @@ class TestOpenWRTExplorerMethods:
         """Test system info response schema."""
         explorer = OpenWRTExplorer()
         result = await explorer.get_system_info()
-        
+
         # Walidacja schematu
         assert result["success"] is True
         assert "model" in result
         assert "hostname" in result
         assert "openwrt_version" in result
         assert "kernel" in result
-        assert "uptime_seconds" in result and isinstance(result["uptime_seconds"], (int, float))
+        assert "uptime_seconds" in result and isinstance(
+            result["uptime_seconds"], (int, float)
+        )
         assert "uptime" in result
-        
+
         # Memory validation – accept either percentage or raw bytes
         has_memory_percent = "memory_used_percent" in result
-        has_memory_bytes = "memory_total_bytes" in result and "memory_free_bytes" in result
+        has_memory_bytes = (
+            "memory_total_bytes" in result and "memory_free_bytes" in result
+        )
 
-        assert has_memory_percent or has_memory_bytes, "No memory information in response"
-        
+        assert has_memory_percent or has_memory_bytes, (
+            "No memory information in response"
+        )
+
         if has_memory_percent:
             assert 0 <= result["memory_used_percent"] <= 100
-        
+
         if has_memory_bytes:
             assert result["memory_total_bytes"] > 0
 
@@ -168,11 +194,11 @@ class TestOpenWRTExplorerMethods:
         """Test WiFi status response."""
         explorer = OpenWRTExplorer()
         result = await explorer.get_wifi_status()
-        
+
         assert result["success"] is True
         assert "interfaces" in result
         assert isinstance(result["interfaces"], list)
-        
+
         if result["interfaces"]:
             iface = result["interfaces"][0]
             # Flexible validation – different fields across OpenWrt versions
@@ -184,11 +210,11 @@ class TestOpenWRTExplorerMethods:
         """Test DHCP leases response format."""
         explorer = OpenWRTExplorer()
         result = await explorer.list_dhcp_leases()
-        
+
         assert result["success"] is True
         assert "leases_count" in result and isinstance(result["leases_count"], int)
         assert "leases" in result and isinstance(result["leases"], list)
-        
+
         for lease in result["leases"]:
             assert "expires_at" in lease
             assert "mac" in lease
@@ -201,19 +227,21 @@ class TestOpenWRTExplorerMethods:
         """Test firewall rules – handles both iptables and nftables."""
         explorer = OpenWRTExplorer()
         result = await explorer.get_firewall_rules()
-        
+
         assert result["success"] is True
         assert "firewall_type" in result
         assert result["firewall_type"] in ["iptables", "nftables", "fw4"]
         assert "rules_preview" in result and isinstance(result["rules_preview"], str)
-        assert "full_output_truncated" in result and isinstance(result["full_output_truncated"], bool)
+        assert "full_output_truncated" in result and isinstance(
+            result["full_output_truncated"], bool
+        )
 
     @pytest.mark.asyncio
     async def test_read_uci_config(self, mock_openwrt_ssh):
         """Test reading a UCI configuration."""
         explorer = OpenWRTExplorer()
         result = await explorer.read_uci_config("dhcp")
-        
+
         assert result["success"] is True
         assert result["config_name"] == "dhcp"
         assert "entries_count" in result and isinstance(result["entries_count"], int)
@@ -224,21 +252,24 @@ class TestOpenWRTExplorerMethods:
         """Test reading an unsupported UCI configuration."""
         explorer = OpenWRTExplorer()
         result = await explorer.read_uci_config("invalid_config_xyz")
-        
+
         assert result["success"] is False
         assert "error" in result
-        assert "not supported" in result["error"].lower() or "allowed" in result["error"].lower()
+        assert (
+            "not supported" in result["error"].lower()
+            or "allowed" in result["error"].lower()
+        )
 
     @pytest.mark.asyncio
     async def test_list_installed_packages(self, mock_openwrt_ssh):
         """Test installed package list response."""
         explorer = OpenWRTExplorer()
         result = await explorer.list_installed_packages()
-        
+
         assert result["success"] is True
         assert "packages_count" in result and isinstance(result["packages_count"], int)
         assert "packages_sample" in result
-        
+
         for pkg in result["packages_sample"]:
             assert "name" in pkg
             assert "version" in pkg
@@ -248,7 +279,7 @@ class TestOpenWRTExplorerMethods:
         """Test router system logs response."""
         explorer = OpenWRTExplorer()
         result = await explorer.get_router_logs(lines=50, filter_level="all")
-        
+
         assert result["success"] is True
         assert "lines_count" in result
         assert "logs" in result
@@ -264,7 +295,9 @@ class TestOpenWRTExplorerMethods:
         assert result["search_term"] == "dhcp"
 
         # Unsafe search term – should be blocked
-        result = await explorer.search_router_logs(search_term="; rm -rf /", max_results=10)
+        result = await explorer.search_router_logs(
+            search_term="; rm -rf /", max_results=10
+        )
         assert result["success"] is False
         assert "error" in result
 
@@ -273,7 +306,7 @@ class TestOpenWRTExplorerMethods:
         """Test network connectivity diagnostics."""
         explorer = OpenWRTExplorer()
         result = await explorer.diagnose_router_connectivity()
-        
+
         assert result["success"] is True
         assert "tests" in result
         assert "summary" in result
@@ -287,7 +320,7 @@ class TestOpenWRTExplorerMethods:
         """Test DHCP static reservations response."""
         explorer = OpenWRTExplorer()
         result = await explorer.get_dhcp_static_leases()
-        
+
         assert result["success"] is True
         assert "static_leases_count" in result
         assert "leases" in result
@@ -296,8 +329,10 @@ class TestOpenWRTExplorerMethods:
     async def test_search_dhcp_logs(self, mock_openwrt_ssh):
         """Test searching DHCP events in logs."""
         explorer = OpenWRTExplorer()
-        result = await explorer.search_dhcp_logs(search_term="aa:bb:cc:dd:ee:01", hours_back=24)
-        
+        result = await explorer.search_dhcp_logs(
+            search_term="aa:bb:cc:dd:ee:01", hours_back=24
+        )
+
         assert result["success"] is True
         assert "events_found" in result
         assert "events" in result
@@ -307,7 +342,7 @@ class TestOpenWRTExplorerMethods:
         """Test DHCP device details by MAC address."""
         explorer = OpenWRTExplorer()
         result = await explorer.get_device_dhcp_details(mac_address="aa:bb:cc:dd:ee:01")
-        
+
         assert result["success"] is True
         assert "device_identifier" in result
         assert "is_currently_connected" in result
@@ -361,10 +396,18 @@ class TestResponseValidation:
         """Validate get_system_info response schema against real data."""
         data = openwrt_test_data["get_system_info"]
 
-        required_fields = ["success", "model", "hostname", "openwrt_version", "kernel", "uptime_seconds", "uptime"]
+        required_fields = [
+            "success",
+            "model",
+            "hostname",
+            "openwrt_version",
+            "kernel",
+            "uptime_seconds",
+            "uptime",
+        ]
         for field in required_fields:
             assert field in data, f"Required field missing: {field}"
-        
+
         assert isinstance(data["success"], bool)
 
     def test_validate_dhcp_leases_schema(self, openwrt_test_data):
@@ -384,7 +427,7 @@ class TestResponseValidation:
     def test_validate_connectivity_schema(self, openwrt_test_data):
         """Validate diagnose_router_connectivity response schema."""
         data = openwrt_test_data["diagnose_router_connectivity"]
-        
+
         assert data["success"] is True
         assert "tests" in data
         assert "summary" in data
@@ -405,10 +448,14 @@ class TestSSHConnection:
     async def test_connect_failure_no_auth(self, mock_openwrt_ssh):
         """SSH connection should fail when no key or password available."""
         from unittest.mock import patch
-        with patch.dict("os.environ", {
-            "OPENWRT_SSH_KEY": "/nonexistent/key",
-            "OPENWRT_PASSWORD": "",
-        }):
+
+        with patch.dict(
+            "os.environ",
+            {
+                "OPENWRT_SSH_KEY": "/nonexistent/key",
+                "OPENWRT_PASSWORD": "",
+            },
+        ):
             with patch("pathlib.Path.exists", return_value=False):
                 conn = SSHConnection()
                 result = await conn.connect()
@@ -436,6 +483,7 @@ class TestSSHConnection:
     async def test_execute_no_connection(self, mock_openwrt_ssh):
         """Execute should fail gracefully when not connected."""
         from unittest.mock import patch
+
         with patch("asyncssh.connect", side_effect=Exception("Connection refused")):
             conn = SSHConnection()
             stdout, stderr, code = await conn.execute("ubus call system board")
@@ -446,16 +494,19 @@ class TestSSHConnection:
     async def test_execute_reconnect(self, mock_openwrt_ssh):
         """Execute should reconnect on ConnectionLost and retry."""
         import asyncssh
+
         conn = SSHConnection()
         await conn.connect()
         call_count = 0
         original = conn._connection.run
+
         async def fail_once(cmd, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise asyncssh.ConnectionLost("Connection lost")
             return await original(cmd, **kwargs)
+
         conn._connection.run = fail_once
         stdout, stderr, code = await conn.execute("ubus call system board")
         assert code == 0
@@ -466,12 +517,15 @@ class TestSSHConnection:
         """Execute should report failure when reconnect fails."""
         import asyncssh
         from unittest.mock import patch
+
         conn = SSHConnection()
         await conn.connect()
+
         async def always_fail(cmd, **kwargs):
             raise asyncssh.ConnectionLost("Connection lost")
+
         conn._connection.run = always_fail
-        with patch.object(conn, 'connect', return_value=False):
+        with patch.object(conn, "connect", return_value=False):
             stdout, stderr, code = await conn.execute("ubus call system board")
             assert code == 1
             assert "Failed to re-establish" in stderr
@@ -481,8 +535,9 @@ class TestSSHConnection:
         """Audit log should be written for executed commands."""
         from unittest.mock import patch
         import tools.openwrt_explorer as oxe
+
         log_file = tmp_path / "audit.log"
-        with patch.object(oxe, 'AUDIT_LOG_FILE', str(log_file)):
+        with patch.object(oxe, "AUDIT_LOG_FILE", str(log_file)):
             conn = SSHConnection()
             await conn.connect()
             stdout, stderr, code = await conn.execute("ubus call system board")
@@ -507,6 +562,7 @@ class TestOpenWRTExplorerEdgeCases:
     async def test_test_connection_failure(self, mock_openwrt_ssh):
         """test_connection should report failure when SSH fails."""
         from unittest.mock import patch
+
         with patch("asyncssh.connect", side_effect=Exception("Timeout")):
             explorer = OpenWRTExplorer()
             result = await explorer.test_connection()
@@ -519,10 +575,12 @@ class TestOpenWRTExplorerEdgeCases:
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original_run = explorer.ssh._connection.run
+
         async def fail_board(cmd, **kwargs):
             if "system board" in cmd:
                 return MagicMock(stdout="", stderr="timeout", exit_status=1)
             return await original_run(cmd, **kwargs)
+
         explorer.ssh._connection.run = fail_board
         result = await explorer.test_connection()
         assert result["success"] is False
@@ -534,10 +592,12 @@ class TestOpenWRTExplorerEdgeCases:
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original = explorer.ssh.execute
+
         async def bad_json(cmd):
             if "system board" in cmd:
                 return "not json", "", 0
             return await original(cmd)
+
         explorer.ssh.execute = bad_json
         result = await explorer.get_system_info()
         assert result["success"] is False
@@ -549,10 +609,12 @@ class TestOpenWRTExplorerEdgeCases:
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original = explorer.ssh.execute
+
         async def bad_wifi(cmd):
             if "network.wireless status" in cmd:
                 return "not json", "", 0
             return await original(cmd)
+
         explorer.ssh.execute = bad_wifi
         result = await explorer.get_wifi_status()
         assert result["success"] is False
@@ -564,10 +626,12 @@ class TestOpenWRTExplorerEdgeCases:
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original = explorer.ssh.execute
+
         async def no_firewall(cmd):
             if "nft" in cmd or "fw4" in cmd or "iptables" in cmd:
                 return "", "not found", 1
             return await original(cmd)
+
         explorer.ssh.execute = no_firewall
         result = await explorer.get_firewall_rules()
         assert result["success"] is False
@@ -587,10 +651,12 @@ class TestOpenWRTExplorerEdgeCases:
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original = explorer.ssh.execute
+
         async def no_version(cmd):
             if "opkg list-installed" in cmd:
                 return "package-without-version-line\nanother", "", 0
             return await original(cmd)
+
         explorer.ssh.execute = no_version
         result = await explorer.list_installed_packages()
         assert result["success"] is True
@@ -610,25 +676,34 @@ class TestOpenWRTExplorerEdgeCases:
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original = explorer.ssh.execute
+
         async def fail_logread(cmd):
             if "logread" in cmd:
                 return "", "logread not found", 127
             return await original(cmd)
+
         explorer.ssh.execute = fail_logread
         result = await explorer.search_router_logs(search_term="dhcp")
         assert result["success"] is False
-        assert "logread not found" in result["error"] or "Failed to fetch logs" in result["error"]
+        assert (
+            "logread not found" in result["error"]
+            or "Failed to fetch logs" in result["error"]
+        )
 
     @pytest.mark.asyncio
-    async def test_diagnose_router_connectivity_no_default_route(self, mock_openwrt_ssh):
+    async def test_diagnose_router_connectivity_no_default_route(
+        self, mock_openwrt_ssh
+    ):
         """diagnose_router_connectivity should use fallback gateway."""
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original = explorer.ssh.execute
+
         async def no_route(cmd):
             if "ip route show" in cmd:
                 return "", "", 0
             return await original(cmd)
+
         explorer.ssh.execute = no_route
         result = await explorer.diagnose_router_connectivity()
         assert result["success"] is True
@@ -640,10 +715,12 @@ class TestOpenWRTExplorerEdgeCases:
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original = explorer.ssh.execute
+
         async def fail_uci(cmd):
             if "uci show dhcp" in cmd:
                 return "", "uci not found", 127
             return await original(cmd)
+
         explorer.ssh.execute = fail_uci
         result = await explorer.get_dhcp_static_leases()
         assert result["success"] is False
@@ -655,10 +732,12 @@ class TestOpenWRTExplorerEdgeCases:
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original = explorer.ssh.execute
+
         async def fail_logread(cmd):
             if "logread" in cmd:
                 return "", "logread not found", 127
             return await original(cmd)
+
         explorer.ssh.execute = fail_logread
         result = await explorer.search_dhcp_logs(search_term="dhcp")
         assert result["success"] is False
@@ -670,13 +749,17 @@ class TestOpenWRTExplorerEdgeCases:
         explorer = OpenWRTExplorer()
         await explorer.test_connection()  # establish connection first
         original = explorer.ssh.execute
+
         async def fail_leases(cmd):
             if "dhcp.leases" in cmd:
                 return "", "no file", 1
             return await original(cmd)
+
         explorer.ssh.execute = fail_leases
         result = await explorer.get_device_dhcp_details(mac_address="aa:bb:cc:dd:ee:01")
-        assert result["success"] is True  # Still returns structure even if lease missing
+        assert (
+            result["success"] is True
+        )  # Still returns structure even if lease missing
         assert result["is_currently_connected"] is False
 
 
