@@ -2,7 +2,6 @@
 Unit test configuration for OpenWRT-MCP.
 """
 
-import pytest
 import sys
 from pathlib import Path
 
