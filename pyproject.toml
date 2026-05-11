@@ -51,6 +51,18 @@ disable_error_code = "untyped-decorator"
 module = "fastmcp.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "asyncssh.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "starlette.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "uvicorn.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

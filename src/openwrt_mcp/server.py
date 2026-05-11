@@ -195,7 +195,7 @@ def create_rest_app() -> Any:
             {
                 "success": True,
                 "total": len(tool_list),
-                "tools": sorted(tool_list, key=lambda x: x["name"]),
+                "tools": sorted(tool_list, key=lambda x: str(x["name"])),
             }
         )
 
