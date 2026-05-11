@@ -83,6 +83,7 @@ jobs:
             -p 9096:9096 \
             --name openwrt-smoke \
             -e OPENWRT_HOST=192.168.1.1 \
+            -e MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1 \
             openwrt-mcp:test
           sleep 5
 
