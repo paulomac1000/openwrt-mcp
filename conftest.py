@@ -2,10 +2,10 @@
 Test fixtures for OpenWRT-MCP unit tests.
 """
 
-import pytest
 import json
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # Mock data for OpenWRT responses
 MOCK_BOARD_JSON = json.dumps(
@@ -37,9 +37,7 @@ MOCK_WIRELESS_STATUS = json.dumps(
                     "type": "ap",
                     "config": {"ssid": "MyNetwork", "mode": "ap"},
                     "ifname": "wlan0",
-                    "stations": [
-                        {"mac": "de:ad:be:ef:00:03", "signal": -45, "inactive": 120}
-                    ],
+                    "stations": [{"mac": "de:ad:be:ef:00:03", "signal": -45, "inactive": 120}],
                 }
             ]
         }
@@ -83,7 +81,7 @@ def _make_run_mock():
         elif "opkg list-installed" in cmd:
             stdout = "luci - git-24.\nfirewall - 2023-05-01\n"
         elif "logread" in cmd:
-            stdout = "Apr 23 10:00:00 OpenWrt daemon.info dnsmasq[1]: DHCPACK(br-lan) 192.168.0.100 abc\n"
+            stdout = "Apr 23 10:00:00 OpenWrt dnsmasq[1]: DHCPACK(br-lan) 192.168.0.100 abc\n"
         elif "ping" in cmd:
             stdout = "64 bytes from 8.8.8.8: seq=0 ttl=118 time=15.2 ms\n"
         else:
