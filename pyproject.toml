@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openwrt-mcp"
+version = "1.1.0"
+description = "Read-only MCP server for OpenWRT router management and diagnostics"
+requires-python = ">=3.13"
+dependencies = [
+    "fastmcp>=2.0.0,<3.0.0",
+    "asyncssh>=2.23.0,<3.0.0",
+    "starlette>=1.0.0",
+    "uvicorn>=0.46.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-mock>=3.15.1",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.8.0",
+    "bandit>=1.7.0",
+]
+
+[project.scripts]
+openwrt-mcp = "openwrt_mcp.server:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["openwrt_mcp"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = "openwrt_mcp.tools.registration"
+# FastMCP @mcp.tool() decorator is untyped — this is a framework limitation
+disable_error_code = "untyped-decorator"
+
+[[tool.mypy.overrides]]
+module = "fastmcp.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "asyncssh.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "starlette.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "uvicorn.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "unit: Unit tests (fast, mocked, no I/O)",
+    "integration: Integration tests (slow, requires real backend)",
+    "smoke: Smoke tests (quick health check, requires local MCP server)",
+    "e2e: End-to-end tests (full pipeline, requires real backend + local MCP server)",
+]
+
+[tool.coverage.run]
+source = ["src/openwrt_mcp"]
+omit = ["tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+]
