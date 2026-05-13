@@ -9,6 +9,7 @@ Architecture:
 - Port 9096: REST API (Starlette) - /api/*
 """
 
+import asyncio
 import inspect
 import json
 import logging
@@ -108,20 +109,48 @@ mcp = FastMCP("OpenWRT-Observer")
 
 register_openwrt_tools(mcp)
 
-
 # =============================================================================
 # TOOL HELPERS
 # =============================================================================
 
 
 def get_all_tools() -> dict[str, Any]:
-    """Return a dictionary of all registered tools."""
-    tools: dict[str, Any] = {}
+    """Return a dictionary of all registered tools.
+
+    Supports FastMCP 2.x (_tool_manager._tools, _tools) and 3.x (list_tools async).
+    Lazy-populates the internal cache on first call for FastMCP 3.x.
+    """
     if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
-        tools = mcp._tool_manager._tools
-    elif hasattr(mcp, "_tools"):
-        tools = mcp._tools
-    return tools
+        return dict(mcp._tool_manager._tools)
+    if hasattr(mcp, "_tools"):
+        return dict(mcp._tools)
+    if hasattr(mcp, "list_tools"):
+        if not hasattr(get_all_tools, "_cache") or not get_all_tools._cache:
+            get_all_tools._cache = _list_tools_sync()
+        return get_all_tools._cache
+    return {}
+
+
+_cache_lock = threading.Lock()
+
+
+def _list_tools_sync() -> dict[str, Any]:
+    """Call mcp.list_tools() synchronously. Thread-safe."""
+    with _cache_lock:
+        if getattr(get_all_tools, "_cache", None):
+            return get_all_tools._cache
+        try:  # pragma: no cover
+            loop = asyncio.new_event_loop()
+            tools_result: list = loop.run_until_complete(mcp.list_tools())
+            loop.close()
+            cache: dict[str, Any] = {}
+            for t in tools_result:
+                name = getattr(t, "name", None)
+                if name:
+                    cache[name] = t
+            return cache
+        except Exception:  # pragma: no cover
+            return {}
 
 
 def get_tool(name: str) -> Any | None:

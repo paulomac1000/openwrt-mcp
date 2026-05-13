@@ -1,5 +1,6 @@
 """MCP tool registration — all 24 OpenWRT tools wrapped as MCP tools."""
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -892,6 +893,19 @@ def register_openwrt_tools(mcp: Any) -> None:
     try:
         tm = getattr(mcp, "_tool_manager", None)
         all_tools = getattr(mcp, "_tools", {}) or (getattr(tm, "_tools", {}) if tm else {})
+
+        # FastMCP 3.x: tools aren't in _tools dict. Use list_tools instead.
+        if not all_tools and hasattr(mcp, "list_tools"):
+            try:
+                ftools: list = asyncio.run(mcp.list_tools())
+                all_tools = {}
+                for ft in ftools:
+                    name = getattr(ft, "name", None)
+                    if name:
+                        all_tools[name] = ft
+            except Exception:
+                pass
+
         for name, fn in all_tools.items():
             if name in tool_manifest_map:
                 fn.__manifest__ = tool_manifest_map[name]

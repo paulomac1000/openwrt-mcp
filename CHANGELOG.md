@@ -32,6 +32,9 @@
 - `request_id` (UUID) included in SSH connection log lines for traceability
 - `ci.yml`: integration tests accept exit code 5 (skip when OPENWRT_HOST not set)
 - `ci.yml`: docker smoke tool count check `13` → `24`
+- Docker base image: `python:3.13-slim` → `python:3.14-slim`
+- fastmcp: `>=2.0.0,<3.0.0` → `>=3.2.4,<4.0.0`
+- `server.py`: `get_all_tools()` supports FastMCP 3.x (lazy cache via `list_tools`)
 
 ### Added
 - `.github/workflows/auto-tag.yml` — auto-tags on merge to main (reads version from `pyproject.toml`)
