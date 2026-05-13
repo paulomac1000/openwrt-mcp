@@ -563,6 +563,213 @@ class OpenWRTExplorer:
             "note": "DHCP logs require 'log_dhcp' enabled in dnsmasq configuration.",
         }
 
+    async def get_router_context(self) -> dict[str, Any]:
+        """Collect a unified router context snapshot — single call aggregation.
+
+        Combines system info, WiFi status, DHCP leases, and connectivity
+        into one response. Partial failures degrade gracefully: each
+        subsection has its own success flag.
+        """
+        result: dict[str, Any] = {
+            "device_id": "unknown",
+            "model": "unknown",
+            "uptime_seconds": 0,
+            "schema_version": "1.0",
+            "subsections": {},
+        }
+
+        # System info
+        try:
+            sys_info = await self.get_system_info()
+            if sys_info.get("success"):
+                result["device_id"] = sys_info.get("hostname", "unknown")
+                result["model"] = sys_info.get("model", "unknown")
+                result["uptime_seconds"] = sys_info.get("uptime_seconds", 0)
+                result["memory_used_percent"] = sys_info.get("memory_used_percent", 0)
+                result["openwrt_version"] = sys_info.get("openwrt_version", "unknown")
+                result["kernel"] = sys_info.get("kernel", "unknown")
+            result["subsections"]["system"] = {
+                "success": sys_info.get("success", False),
+                "error": sys_info.get("error") if not sys_info.get("success") else None,
+            }
+        except Exception:
+            result["subsections"]["system"] = {"success": False, "error": "system_info_failed"}
+
+        # CPU load
+        try:
+            stdout, _, _ = await self.ssh.execute("cat /proc/loadavg")
+            parts = stdout.strip().split()
+            result["cpu_load_1min"] = float(parts[0]) if len(parts) > 0 else 0
+            result["subsections"]["cpu"] = {"success": True}
+        except Exception:
+            result["cpu_load_1min"] = 0
+            result["subsections"]["cpu"] = {"success": False, "error": "loadavg_failed"}
+
+        # WiFi status
+        try:
+            wifi = await self.get_wifi_status()
+            if wifi.get("success"):
+                result["interfaces_count"] = wifi.get("interfaces_count", 0)
+                total_clients = sum(i.get("clients_count", 0) for i in wifi.get("interfaces", []))
+                result["wifi_clients_total"] = total_clients
+                result["wifi_interfaces"] = [
+                    {
+                        "ssid": i.get("ssid"),
+                        "mode": i.get("mode"),
+                        "clients": i.get("clients_count"),
+                    }
+                    for i in wifi.get("interfaces", [])
+                ]
+            result["subsections"]["wifi"] = {
+                "success": wifi.get("success", False),
+                "error": wifi.get("error") if not wifi.get("success") else None,
+            }
+        except Exception:
+            result["subsections"]["wifi"] = {"success": False, "error": "wifi_failed"}
+
+        # DHCP leases count
+        try:
+            leases = await self.list_dhcp_leases()
+            if leases.get("success"):
+                result["dhcp_leases_count"] = leases.get("leases_count", 0)
+            result["subsections"]["dhcp"] = {
+                "success": leases.get("success", False),
+                "error": leases.get("error") if not leases.get("success") else None,
+            }
+        except Exception:
+            result["subsections"]["dhcp"] = {"success": False, "error": "dhcp_failed"}
+
+        # Connectivity summary
+        try:
+            diag = await self.diagnose_router_connectivity()
+            if diag.get("success"):
+                summary = diag.get("summary", {})
+                result["connectivity_health"] = summary.get("health", "unknown")
+                result["internet_reachable"] = next(
+                    (t.get("success") for t in diag.get("tests", {}).values()),
+                    False,
+                )
+            result["subsections"]["connectivity"] = {
+                "success": diag.get("success", False),
+                "error": diag.get("error") if not diag.get("success") else None,
+            }
+        except Exception:
+            result["subsections"]["connectivity"] = {
+                "success": False,
+                "error": "connectivity_failed",
+            }
+
+        return result
+
+    def describe_capabilities(self) -> dict[str, Any]:
+        """Return server capability metadata — context collectors and transports.
+
+        This is the context side of capability introspection.
+        Tool manifests are added by the registration wrapper layer.
+        """
+        return {
+            "server": "OpenWRT-Observer",
+            "context_collectors": [
+                {
+                    "name": "system",
+                    "source": "ubus+proc",
+                    "description": "Board info, memory, uptime, CPU load",
+                },
+                {
+                    "name": "wifi",
+                    "source": "ubus",
+                    "description": "Wireless radios, SSIDs, connected clients",
+                },
+                {"name": "dhcp", "source": "dnsmasq", "description": "Active DHCP leases"},
+                {"name": "static_dhcp", "source": "uci", "description": "Static DHCP reservations"},
+                {
+                    "name": "firewall",
+                    "source": "nftables+iptables",
+                    "description": "Firewall rules",
+                },
+                {
+                    "name": "uci_config",
+                    "source": "uci",
+                    "description": "UCI configuration sections",
+                },
+                {"name": "packages", "source": "opkg", "description": "Installed packages"},
+                {"name": "logs", "source": "logread", "description": "System and DHCP logs"},
+                {
+                    "name": "connectivity",
+                    "source": "ping+dns",
+                    "description": "Internet connectivity and DNS health",
+                },
+            ],
+            "transports": ["sse", "rest"],
+        }
+
+    async def ping_host(self, host: str, count: int = 4) -> dict[str, Any]:
+        """Ping a host from the router."""
+        cmd = f"ping -c {min(max(count, 1), 10)} -W 2 {host}"
+        stdout, stderr, code = await self.ssh.execute(cmd)
+        return {
+            "success": code == 0,
+            "host": host,
+            "output": stdout[:500] if stdout else (stderr or "no output"),
+            "reachable": code == 0,
+        }
+
+    async def traceroute_host(self, host: str) -> dict[str, Any]:
+        """Traceroute to a host from the router."""
+        cmd = f"traceroute -n {host}"
+        stdout, stderr, code = await self.ssh.execute(cmd)
+        return {
+            "success": True,
+            "host": host,
+            "output": stdout[:1000] if stdout else (stderr or "traceroute not available"),
+        }
+
+    async def nslookup_host(self, host: str, dns_server: str = "8.8.8.8") -> dict[str, Any]:
+        """Nslookup a host from the router."""
+        cmd = f"nslookup {host} {dns_server}"
+        stdout, stderr, code = await self.ssh.execute(cmd)
+        resolved = code == 0 and ("Address" in stdout or "Name:" in stdout)
+        return {
+            "success": True,
+            "host": host,
+            "resolved": resolved,
+            "output": stdout[:500] if stdout else (stderr or "no output"),
+        }
+
+    async def wifi_scan(self, radio: str = "wlan0") -> dict[str, Any]:
+        """Scan for neighboring WiFi networks."""
+        cmd = f"iwinfo {radio} scan"
+        stdout, stderr, code = await self.ssh.execute(cmd)
+        if code != 0:
+            return {"success": False, "error": stderr or "WiFi scan failed"}
+
+        networks = []
+        current: dict[str, Any] = {}
+        for line in stdout.splitlines():
+            if line.startswith("Cell"):
+                if current:
+                    networks.append(current)
+                current = {}
+            elif "Address:" in line:
+                current["bssid"] = line.split("Address:")[-1].strip()
+            elif "ESSID:" in line:
+                current["ssid"] = line.split("ESSID:")[-1].strip().strip('"')
+            elif "Channel:" in line:
+                current["channel"] = line.split("Channel:")[-1].strip()
+            elif "Signal level:" in line:
+                current["signal"] = line.split("Signal level:")[-1].strip()
+            elif "Mode:" in line:
+                current["mode"] = line.split("Mode:")[-1].strip()
+        if current:
+            networks.append(current)
+
+        return {
+            "success": True,
+            "radio": radio,
+            "networks_found": len(networks),
+            "networks": networks[:20],
+        }
+
     @staticmethod
     def _format_uptime(seconds: int) -> str:
         days, remainder = divmod(seconds, 86400)

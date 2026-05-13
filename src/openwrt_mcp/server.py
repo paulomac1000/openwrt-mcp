@@ -169,7 +169,7 @@ def create_rest_app() -> Any:
             {
                 "status": "healthy",
                 "server": "OpenWRT-Observer",
-                "version": "1.1.0",
+                "version": "1.2.0",
                 "tools_registered": get_tool_count(),
                 "tool_invocations": counts,
                 "total_invocations": sum(counts.values()),

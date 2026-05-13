@@ -97,25 +97,37 @@ curl -X POST http://localhost:9096/api/tools/get_router_info \
 curl http://localhost:9096/api/tools/get_router_info/manifest
 ```
 
-## Available Tools (13)
+## Available Tools (24)
 
-All tools are **read-only** — no configuration changes, no reboots, no package installations.
+Tools are categorized by risk level: **[READ]** tools are safe — they query the router with no side effects.
+**[WRITE]** tools can modify router state and require `ENABLE_WRITE_OPERATIONS=1` in `.env`.
 
-| Category | Tool | Description |
-|----------|------|-------------|
-| **Connection** | `test_router_connection` | Verify SSH connectivity |
-| **System** | `get_router_info` | Board info, memory, uptime, release |
-| **Network** | `get_router_wifi_status` | WiFi radios, SSIDs, connected clients |
-| | `get_router_dhcp_leases` | Active DHCP leases |
-| | `diagnose_router_connectivity` | Ping and DNS tests |
-| **Security** | `get_router_firewall_rules` | iptables / nftables / fw4 rules |
-| | `read_router_uci_config` | Read UCI configuration (dhcp, network, wireless, firewall, system) |
-| **Diagnostics** | `get_router_logs` | Recent system logs |
-| | `search_router_logs` | Filtered log search |
-| **Packages** | `list_router_packages` | Installed OPKG packages |
-| **DHCP** | `get_dhcp_static_leases` | Static DHCP reservations |
-| | `search_dhcp_logs` | Search DHCP events in logs |
-| | `get_device_dhcp_details` | Full device info (lease, reservation, logs) |
+| Category | Tool | Risk | Description |
+|----------|------|------|-------------|
+| **Connection** | `test_router_connection` | READ | Verify SSH connectivity |
+| **System** | `get_router_info` | READ | Board info, memory, uptime, release |
+| | `get_router_context` | READ | Unified context snapshot (system, wifi, DHCP, health) |
+| | `describe_router_capabilities` | READ | Server introspection — tools, manifests, collectors |
+| **Network** | `get_router_wifi_status` | READ | WiFi radios, SSIDs, connected clients |
+| | `get_router_dhcp_leases` | READ | Active DHCP leases |
+| | `diagnose_router_connectivity` | READ | Ping, DNS, and gateway tests |
+| | `ping_host` | READ | Ping a specific host |
+| | `traceroute_host` | READ | Traceroute to a host |
+| | `nslookup_host` | READ | DNS lookup from the router |
+| | `wifi_scan` | READ | Scan neighboring WiFi networks |
+| **Security** | `get_router_firewall_rules` | READ | iptables / nftables / fw4 rules |
+| | `read_router_uci_config` | READ | Read UCI configuration sections |
+| **Diagnostics** | `get_router_logs` | READ | Recent system logs |
+| | `search_router_logs` | READ | Filtered log search |
+| **Packages** | `list_router_packages` | READ | Installed OPKG packages |
+| **DHCP** | `get_dhcp_static_leases` | READ | Static DHCP reservations |
+| | `search_dhcp_logs` | READ | Search DHCP events in logs |
+| | `get_device_dhcp_details` | READ | Full device info (lease, reservation, logs) |
+| **Write** | `uci_set` | WRITE | Set a UCI configuration value |
+| | `uci_commit` | WRITE | Commit UCI changes permanently |
+| | `restart_interface` | WRITE | Restart a network interface |
+| | `reload_network` | WRITE | Reload network services |
+| | `reboot_device` | WRITE | Reboot the router |
 
 ## Configuration
 
@@ -138,24 +150,38 @@ All configuration is via environment variables. See `.env.example` for a complet
 | `REST_API_PORT` | `9096` | REST API port |
 | `SSH_TIMEOUT` | `30` | SSH connection timeout (seconds) |
 | `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED` | — | Set to `1` for Docker port forwarding |
+| `ENABLE_WRITE_OPERATIONS` | `false` | Set to `1` to enable write tools (uci_set, reboot, etc.) |
+| `OPENWRT_PASSWORD` | `None` | SSH password (not recommended — use SSH keys) |
 | `ENABLE_AUDIT_LOGGING` | `true` | Log all executed commands |
 | `AUDIT_LOG_FILE` | `/var/log/openwrt_mcp.log` | Audit log path |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
 ## Security Model
 
-- **Read-only by design** — All SSH commands are whitelisted; no write operations allowed
-- **Command whitelist** — Only explicit read-only patterns permitted (`ubus call`, `uci show`, `cat /proc/*`, `logread`, `ping`, etc.)
-- **Blocked patterns** — `rm`, `reboot`, `wget`, `curl`, `uci set/add/remove`, shell metacharacters (`;`, `|`, `&&`, `$`, etc.)
+- **Read-only by default** — All SSH commands are whitelisted; write operations (`uci set`, `ifdown`, `ubus reboot`) require `ENABLE_WRITE_OPERATIONS=1`
+- **Command whitelist** — Explicit read-only patterns (`ubus call`, `uci show`, `cat /proc/*`, `logread`, `ping`, etc.)
+- **Write command whitelist** — Separate `execute_write()` path for write operations (`ifdown`, `ifup`, `uci set/commit`, `/etc/init.d/network`, `ubus reboot`)
+- **Blocked patterns** — `rm`, `reboot`, `wget`, `curl`, `uci set` (in read path), shell metacharacters (`;`, `|`, `&&`, `$`, etc.)
 - **Key-based authentication** — Password login discouraged
 - **Audit logging** — All commands logged with timestamps for accountability
 - **Localhost binding** — All ports bind to `127.0.0.1` by default; set `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1` for Docker
+
+## Standards Compliance
+
+This server follows two AI-First standards:
+
+| Standard | Document | Version | Description |
+|----------|----------|---------|-------------|
+| **AFDS** | [`docs_standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/afds-doc-writer/docs_standards.md) | v1.0 | Documentation structure, frontmatter schema, controlled language |
+| **MCP Core** | [`mcp_standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/mcp-server-architect/mcp_standards.md) | v1.1.0 | Tool design, response contracts, testing hierarchy, security |
+
+Compliance level: **L2+** (all mandatory and recommended rules met). The MCP standard v1.1.0 features (Write Guard, `impact`/`privacy`/`reversible` manifest fields) were validated against this project's implementation. See `docs/openwrt-mcp.md` for the full reference.
 
 ## Testing
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/unit/ tests/integration/ -q       # 137 tests
+pytest tests/unit/ tests/integration/ -q       # 254 tests (requires .env for integration)
 pytest tests/unit/ --cov=openwrt_mcp -q         # 80%+ coverage
 ruff check . && ruff format --check .           # lint
 mypy src/openwrt_mcp/ --strict                  # type check
@@ -167,11 +193,12 @@ bandit -r src/openwrt_mcp/ -ll                  # security
 | Metric | Value |
 |--------|-------|
 | Python | 3.13+ |
-| Tools | 13 (read-only) |
-| Tests | 137 (115 unit + 22 integration) |
-| Coverage | 80.34% |
+| Tools | 24 (19 READ + 5 WRITE) |
+| Tests | 254 (unit + integration); 280 total (with smoke + e2e) |
+| Coverage | 87% |
 | Lint | 0 errors (ruff + mypy --strict + bandit) |
 | Docker | `ghcr.io/paulomac1000/openwrt-mcp:latest` |
+| Standards | AFDS v1.0 + [MCP Core v1.1.0](https://github.com/paulomac1000/ai-skills) — L2+ |
 | License | MIT |
 
 ## License

@@ -8,7 +8,23 @@ from typing import Any
 
 _request_counter: dict[str, int] = defaultdict(int)
 _counter_lock = threading.Lock()
-TOOLS_VERSION = "1.1.0"
+_current_request_id: str = ""
+_request_id_lock = threading.Lock()
+
+
+def set_request_id(request_id: str) -> None:
+    """Set the current request ID for logging context."""
+    global _current_request_id
+    with _request_id_lock:
+        _current_request_id = request_id
+
+
+def get_request_id() -> str:
+    """Return the current request ID for log context."""
+    return _current_request_id
+
+
+TOOLS_VERSION = "1.2.0"
 
 
 def generate_request_id() -> str:

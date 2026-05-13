@@ -14,11 +14,15 @@ class MCPWrapper:
 
     Probes multiple internal storage locations and callable attributes
     to remain compatible across FastMCP version upgrades.
+
+    Uses a single shared event loop for all async calls so that
+    persistent connections (SSH, etc.) work across multiple invocations.
     """
 
     def __init__(self, mcp: Any) -> None:
         self._mcp = mcp
         self._tools: dict[str, Any] = self._discover_tools()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def _discover_tools(self) -> dict[str, Any]:
         """Probe known tool storage locations."""
@@ -55,11 +59,13 @@ class MCPWrapper:
         fn = self._unwrap_tool(tool)
 
         if inspect.iscoroutinefunction(fn):
-            loop = asyncio.new_event_loop()
+            if self._loop is None or self._loop.is_closed():
+                self._loop = asyncio.new_event_loop()
+            loop = self._loop
             try:
                 result = loop.run_until_complete(fn(**kwargs))
             finally:
-                loop.close()
+                pass
         else:
             result = fn(**kwargs)
 
