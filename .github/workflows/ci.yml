@@ -57,7 +57,7 @@ jobs:
             --cov-fail-under=80
 
       - name: Run integration tests
-        run: pytest tests/integration/ -v --tb=short -m integration --cov=openwrt_mcp --cov-append
+        run: pytest tests/integration/ -v --tb=short -m integration --cov=openwrt_mcp --cov-append || [ $? -eq 5 ]
 
   docker-smoke:
     runs-on: ubuntu-latest

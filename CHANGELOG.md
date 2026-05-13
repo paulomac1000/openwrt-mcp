@@ -28,13 +28,22 @@
 - `.env` loaded from `conftest.py` for consistent env var injection
 - Integration tests with real OpenWRT router added (19 READ tools)
 - Mock integration tests for dangerous write tools added (10 tests)
+- `timeout_seconds: int | None = None` → `int = SSH_TIMEOUT` for all I/O tools (fixes MCP SSE transport)
+- `request_id` (UUID) included in SSH connection log lines for traceability
+- `ci.yml`: integration tests accept exit code 5 (skip when OPENWRT_HOST not set)
+- `ci.yml`: docker smoke tool count check `13` → `24`
+
+### Added
+- `.github/workflows/auto-tag.yml` — auto-tags on merge to main (reads version from `pyproject.toml`)
+- `SSHConnection.execute_write()` with `SecurityValidator.validate_write_command()` — write command validation boundary (8 unit tests)
+- `ENABLE_WRITE_OPERATIONS` environment variable (default: false)
 
 ### Removed
 - Device registry (`db/` package and related tools) — out of scope
 
 ### Metrics
 - Coverage: 87%
-- 254 tests (unit + integration)
+- 279 tests (200 unit + 53 integration + 8 smoke + 18 e2e)
 - 0 errors: ruff / mypy --strict / bandit -ll
 
 ## [1.1.0] — 2026-05-11
