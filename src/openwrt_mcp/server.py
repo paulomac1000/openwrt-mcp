@@ -114,34 +114,36 @@ register_openwrt_tools(mcp)
 # =============================================================================
 
 
+_cache_lock = threading.Lock()
+_tool_cache: dict[str, Any] = {}
+
+
 def get_all_tools() -> dict[str, Any]:
     """Return a dictionary of all registered tools.
 
     Supports FastMCP 2.x (_tool_manager._tools, _tools) and 3.x (list_tools async).
     Lazy-populates the internal cache on first call for FastMCP 3.x.
     """
+    global _tool_cache
     if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
         return dict(mcp._tool_manager._tools)
     if hasattr(mcp, "_tools"):
         return dict(mcp._tools)
-    if hasattr(mcp, "list_tools"):
-        if not hasattr(get_all_tools, "_cache") or not get_all_tools._cache:
-            get_all_tools._cache = _list_tools_sync()
-        return get_all_tools._cache
-    return {}
-
-
-_cache_lock = threading.Lock()
+    if hasattr(mcp, "list_tools") and not _tool_cache:
+        _tool_cache = _list_tools_sync()
+    return _tool_cache
 
 
 def _list_tools_sync() -> dict[str, Any]:
     """Call mcp.list_tools() synchronously. Thread-safe."""
     with _cache_lock:
-        if getattr(get_all_tools, "_cache", None):
-            return get_all_tools._cache
+        if _tool_cache:
+            return _tool_cache
         try:  # pragma: no cover
             loop = asyncio.new_event_loop()
-            tools_result: list = loop.run_until_complete(mcp.list_tools())
+            tools_result: list[Any] = loop.run_until_complete(
+                mcp.list_tools()  # type: ignore[attr-defined]
+            )
             loop.close()
             cache: dict[str, Any] = {}
             for t in tools_result:

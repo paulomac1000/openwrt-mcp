@@ -181,7 +181,7 @@ Compliance level: **L2+** (all mandatory and recommended rules met). The MCP sta
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/unit/ tests/integration/ -q       # 254 tests (requires .env for integration)
+pytest tests/unit/ tests/integration/ -q       # 253 tests (requires .env for integration)
 pytest tests/unit/ --cov=openwrt_mcp -q         # 80%+ coverage
 ruff check . && ruff format --check .           # lint
 mypy src/openwrt_mcp/ --strict                  # type check
@@ -192,10 +192,10 @@ bandit -r src/openwrt_mcp/ -ll                  # security
 
 | Metric | Value |
 |--------|-------|
-| Python | 3.13+ |
+| Python | 3.13+ (Docker: 3.14) |
 | Tools | 24 (19 READ + 5 WRITE) |
-| Tests | 254 (unit + integration); 280 total (with smoke + e2e) |
-| Coverage | 87% |
+| Tests | 253 (unit + integration); 279 total (with smoke + e2e) |
+| Coverage | 86% |
 | Lint | 0 errors (ruff + mypy --strict + bandit) |
 | Docker | `ghcr.io/paulomac1000/openwrt-mcp:latest` |
 | Standards | AFDS v1.0 + [MCP Core v1.1.0](https://github.com/paulomac1000/ai-skills) — L2+ |

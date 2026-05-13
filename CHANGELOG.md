@@ -36,16 +36,11 @@
 - fastmcp: `>=2.0.0,<3.0.0` → `>=3.2.4,<4.0.0`
 - `server.py`: `get_all_tools()` supports FastMCP 3.x (lazy cache via `list_tools`)
 
-### Added
-- `.github/workflows/auto-tag.yml` — auto-tags on merge to main (reads version from `pyproject.toml`)
-- `SSHConnection.execute_write()` with `SecurityValidator.validate_write_command()` — write command validation boundary (8 unit tests)
-- `ENABLE_WRITE_OPERATIONS` environment variable (default: false)
-
 ### Removed
 - Device registry (`db/` package and related tools) — out of scope
 
 ### Metrics
-- Coverage: 87%
+- Coverage: 86%
 - 279 tests (200 unit + 53 integration + 8 smoke + 18 e2e)
 - 0 errors: ruff / mypy --strict / bandit -ll
 

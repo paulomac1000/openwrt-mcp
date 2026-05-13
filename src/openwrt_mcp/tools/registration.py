@@ -897,7 +897,7 @@ def register_openwrt_tools(mcp: Any) -> None:
         # FastMCP 3.x: tools aren't in _tools dict. Use list_tools instead.
         if not all_tools and hasattr(mcp, "list_tools"):
             try:
-                ftools: list = asyncio.run(mcp.list_tools())
+                ftools: list[Any] = asyncio.run(mcp.list_tools())
                 all_tools = {}
                 for ft in ftools:
                     name = getattr(ft, "name", None)

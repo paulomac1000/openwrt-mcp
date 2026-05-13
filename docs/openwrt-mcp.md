@@ -175,8 +175,8 @@ src/openwrt_mcp/
     registration.py       # register_openwrt_tools — 24 MCP tool wrappers
   __main__.py              # python -m entry point
 tests/
-  unit/                   # 190 unit tests (all mocked, no I/O)
-  integration/            # 64 integration tests (in-process MCP + real router)
+  unit/                   # 200 unit tests (all mocked, no I/O)
+  integration/            # 53 integration tests (in-process MCP + real router)
   smoke/                  # 8 smoke tests (REST API health checks)
   e2e/                    # 18 E2E tests (full pipeline)
 ```
@@ -210,7 +210,7 @@ Optional:
 - SSH key-based authentication is configured on the router
 - Server runs as a single Python process with daemon threads for
   health and REST API
-- Python 3.13 or newer is available (3.13-slim base Docker image)
+- Python 3.13 or newer is available (3.14-slim base Docker image)
 
 ### Constraints
 
