@@ -61,6 +61,13 @@ class SecurityValidator:
         # Network diagnostics
         r"^ping -c \d+(?: -W \d+)? [\w\.\-]+$",
         r"^nslookup [\w\.\-]+(?: [\w\.\-]+)?$",
+        r"^traceroute -n [\w\.\-]+$",
+        r"^traceroute [\w\.\-]+$",
+        # WiFi scan (read-only)
+        r"^iwinfo .+ scan$",
+        r"^iw dev .+ scan$",
+        # System load
+        r"^cat /proc/loadavg$",
         # Packages (OPKG) – READ-ONLY ONLY
         r"^opkg list$",
         r"^opkg list-installed$",
@@ -141,6 +148,52 @@ class SecurityValidator:
             f"Allowed: system info, WiFi status, DHCP leases, firewall rules, "
             f"UCI configuration (read-only), package lists, network diagnostics"
         )
+
+    # ALLOWED WRITE-ONLY COMMANDS (guarded by ENABLE_WRITE_OPERATIONS=1)
+    ALLOWED_WRITE_PATTERNS = [
+        r"^ifdown [a-z][a-z0-9._-]{0,14}$",
+        r"^ifup [a-z][a-z0-9._-]{0,14}$",
+        r"^/etc/init\.d/network (?:reload|restart)$",
+        r"^uci set [a-zA-Z0-9._-]+\.@?[a-zA-Z0-9._-]+\[\d+\]\.[a-zA-Z0-9._-]+=[^\s]+$",
+        r"^uci set [a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+=[^\s]+$",
+        r"^uci commit [a-zA-Z0-9._-]+$",
+        r"^ubus call system reboot$",
+    ]
+
+    @classmethod
+    def validate_write_command(cls, command: str) -> tuple[bool, str]:
+        """Validate a write-mode command before execution.
+
+        Only active when ENABLE_WRITE_OPERATIONS=1.
+        Uses its own allowlist of safe write operations.
+        """
+        if not command or not isinstance(command, str):
+            return False, "Empty or invalid command"
+
+        cmd_stripped = command.strip()
+
+        for pattern in cls.ALLOWED_WRITE_PATTERNS:
+            if re.fullmatch(pattern, cmd_stripped):
+                return True, "Command approved"
+
+        return False, (
+            f"Unsupported write command: '{cmd_stripped[:50]}'\n"
+            f"Allowed: ifdown <interface>, ifup <interface>, /etc/init.d/network reload|restart"
+        )
+
+    @classmethod
+    def validate_interface_name(cls, name: str) -> str:
+        """Validate a network interface name (e.g. 'wan', 'lan', 'wwan0')."""
+        if not name or not re.match(r"^[a-z][a-z0-9._-]{0,14}$", name):
+            raise ValidationError(
+                f"Invalid interface name: '{name}'. "
+                "Must start with a letter and contain only lowercase"
+                " letters, digits, dots, underscores, or hyphens."
+            )
+        BLOCKED_INTERFACES = {"lo", "lo0"}
+        if name.lower() in BLOCKED_INTERFACES:
+            raise ValidationError(f"Interface '{name}' is blocked from restart")
+        return name
 
     @classmethod
     def sanitize_command(cls, command: str) -> str:

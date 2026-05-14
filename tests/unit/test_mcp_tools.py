@@ -97,23 +97,37 @@ class TestToolRegistration:
         "get_dhcp_static_leases",
         "search_dhcp_logs",
         "get_device_dhcp_details",
+        "get_router_context",
+        "describe_router_capabilities",
+        "restart_interface",
+        "reload_network",
+        "uci_set",
+        "uci_commit",
+        "reboot_device",
+        "ping_host",
+        "traceroute_host",
+        "nslookup_host",
+        "wifi_scan",
     ]
 
     def test_all_tools_registered(self, mock_mcp):
-        """All 13 tools should be registered after calling register_openwrt_tools."""
+        """All 24 tools should be registered after calling register_openwrt_tools."""
         register_openwrt_tools(mock_mcp)
         for tool_name in self.EXPECTED_TOOLS:
             assert tool_name in mock_mcp._tools, f"Missing tool: {tool_name}"
-        assert len(mock_mcp._tools) == 13
+        assert len(mock_mcp._tools) == 24
 
-    def test_all_tools_have_read_prefix(self, mock_mcp):
-        """Every tool docstring MUST start with [READ]."""
+    def test_all_tools_have_manifest_with_risk(self, mock_mcp):
+        """[L2+] Every tool manifest must have a risk field, and docstring must start with it."""
         register_openwrt_tools(mock_mcp)
-        for tool_name in self.EXPECTED_TOOLS:
+        for tool_name in mock_mcp._tools:
             tool_fn = mock_mcp.get_tool(tool_name)
+            manifest = getattr(tool_fn, "__manifest__", {})
+            assert "risk" in manifest, f"Tool '{tool_name}' manifest missing risk"
+            risk = manifest["risk"]
             doc = (tool_fn.__doc__ or "").strip()
-            assert doc.startswith("[READ]"), (
-                f"Tool '{tool_name}' docstring missing [READ] prefix: {doc[:50]}"
+            assert doc.startswith(f"[{risk}]"), (
+                f"Tool '{tool_name}' docstring should start with [{risk}], got: {doc[:50]}"
             )
 
     @pytest.mark.asyncio
@@ -152,6 +166,11 @@ class TestToolRegistration:
             ("diagnose_router_connectivity", "diagnose_router_connectivity", ()),
             ("get_dhcp_static_leases", "get_dhcp_static_leases", ()),
             ("search_dhcp_logs", "search_dhcp_logs", ("dhcp",)),
+            ("get_router_context", "get_router_context", ()),
+            ("ping_host", "ping_host", ("8.8.8.8", 4)),
+            ("traceroute_host", "traceroute_host", ("8.8.8.8",)),
+            ("nslookup_host", "nslookup_host", ("google.com", "8.8.8.8")),
+            ("wifi_scan", "wifi_scan", ("wlan0",)),
         ],
     )
     async def test_tool_timeout_seconds_calls_set_timeout(
@@ -190,6 +209,8 @@ class TestToolErrorHandling:
             "list_router_packages",
             "diagnose_router_connectivity",
             "get_dhcp_static_leases",
+            "get_router_context",
+            "describe_router_capabilities",
         ],
     )
     async def test_tool_exception_handler_no_args(self, mock_mcp, tool_name):
@@ -212,6 +233,10 @@ class TestToolErrorHandling:
             ("search_router_logs", ("test", 10)),
             ("search_dhcp_logs", ("dhcp",)),
             ("get_device_dhcp_details", ("aa:bb:cc:dd:ee:ff", None)),
+            ("ping_host", ("8.8.8.8", 4)),
+            ("traceroute_host", ("8.8.8.8",)),
+            ("nslookup_host", ("google.com", "8.8.8.8")),
+            ("wifi_scan", ("wlan0",)),
         ],
     )
     async def test_tool_exception_handler_with_args(self, mock_mcp, tool_name, args):

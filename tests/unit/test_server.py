@@ -12,9 +12,9 @@ class TestServerHelpers:
         tools = get_all_tools()
         assert isinstance(tools, dict)
 
-    def test_get_all_tools_has_13_items(self):
+    def test_get_all_tools_has_24_items(self):
         tools = get_all_tools()
-        assert len(tools) == 13
+        assert len(tools) == 24
 
     def test_get_tool_valid(self):
         tool = get_tool("get_router_info")
@@ -25,7 +25,7 @@ class TestServerHelpers:
         assert tool is None
 
     def test_get_tool_count(self):
-        assert get_tool_count() == 13
+        assert get_tool_count() == 24
 
     def test_get_tool_manifest_valid(self):
         manifest = get_tool_manifest("get_router_info")

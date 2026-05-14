@@ -4,6 +4,7 @@ Uses MCPWrapper (Canonical Template 8) instead of direct framework access.
 """
 
 import json
+import os
 
 import pytest
 from fastmcp import FastMCP
@@ -12,6 +13,16 @@ from openwrt_mcp.tools.registration import register_openwrt_tools
 from tests.integration.mcp_wrapper import MCPWrapper
 
 pytestmark = pytest.mark.integration
+
+if not os.getenv("OPENWRT_HOST"):
+    pytest.skip("Integration tests require OPENWRT_HOST", allow_module_level=True)
+
+_HOST = os.getenv("OPENWRT_HOST", "")
+if _HOST in ("192.168.1.1", "YOUR_ROUTER_IP", "CHANGEME"):
+    pytest.skip(
+        f"OPENWRT_HOST is set to placeholder value '{_HOST}'",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -36,6 +47,17 @@ EXPECTED_TOOLS = [
     "get_dhcp_static_leases",
     "search_dhcp_logs",
     "get_device_dhcp_details",
+    "get_router_context",
+    "describe_router_capabilities",
+    "restart_interface",
+    "reload_network",
+    "uci_set",
+    "uci_commit",
+    "reboot_device",
+    "ping_host",
+    "traceroute_host",
+    "nslookup_host",
+    "wifi_scan",
 ]
 
 ALL_MANIFEST_KEYS = frozenset(
@@ -52,6 +74,9 @@ ALL_MANIFEST_KEYS = frozenset(
         "determinism",
         "latency",
         "cost",
+        "impact",
+        "privacy",
+        "reversible",
     }
 )
 
@@ -60,9 +85,9 @@ class TestIntegrationManifests:
     """Verify all tools have registered via MCPWrapper."""
 
     def test_all_tools_registered(self, mcp_instance):
-        """All 13 tools should be registered."""
+        """All 24 tools should be registered."""
         tools = mcp_instance._tools
-        assert len(tools) == 13, f"Expected 13 tools, got {len(tools)}"
+        assert len(tools) == 24, f"Expected 24 tools, got {len(tools)}"
 
     def test_all_tools_have_manifest(self, mcp_instance):
         """Every tool should have __manifest__ attribute."""
@@ -74,8 +99,18 @@ class TestIntegrationManifests:
             assert manifest["name"] == name, (
                 f"Manifest name mismatch: {manifest.get('name')} != {name}"
             )
-            assert manifest["risk"] == "READ", (
-                f"Tool '{name}' manifest risk is not READ: {manifest['risk']}"
+            WRITE_TOOLS = frozenset(
+                {
+                    "restart_interface",
+                    "reload_network",
+                    "uci_set",
+                    "uci_commit",
+                    "reboot_device",
+                }
+            )
+            expected_risk = "WRITE" if name in WRITE_TOOLS else "READ"
+            assert manifest["risk"] == expected_risk, (
+                f"Tool '{name}' manifest risk mismatch: {manifest['risk']} != {expected_risk}"
             )
 
     def test_all_manifests_have_all_keys(self, mcp_instance):

@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install linting tools
         run: pip install ruff mypy bandit
@@ -39,10 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.14
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -51,13 +51,13 @@ jobs:
 
       - name: Run unit tests with coverage
         run: |
-          pytest tests/unit/ -v --tb=short \
+          pytest tests/unit/ -v --tb=long \
             --cov=openwrt_mcp \
             --cov-report=term-missing \
             --cov-fail-under=80
 
       - name: Run integration tests
-        run: pytest tests/integration/ -v --tb=short -m integration
+        run: pytest tests/integration/ -v --tb=long -m integration --cov=openwrt_mcp --cov-append || [ $? -eq 5 ]
 
   docker-smoke:
     runs-on: ubuntu-latest
@@ -95,7 +95,7 @@ jobs:
           TOOLS=$(curl -s http://localhost:9096/api/tools \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['total'])")
           echo "Tools registered: $TOOLS"
-          [ "$TOOLS" = "13" ] || (echo "FAIL: expected 13 tools, got $TOOLS" && exit 1)
+          [ "$TOOLS" = "24" ] || (echo "FAIL: expected 24 tools, got $TOOLS" && exit 1)
 
           echo "=== Manifest test ==="
           curl -fsS http://localhost:9096/api/tools/get_router_info/manifest || exit 1

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Server Capabilities",
+  "description": "Response schema for describe_router_capabilities tool. Describes server version, transports, context collectors, and all registered MCP tools.",
+  "type": "object",
+  "properties": {
+    "server": {
+      "type": "string",
+      "description": "Server name identifier"
+    },
+    "version": {
+      "type": "string",
+      "description": "Server software version"
+    },
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for forward compatibility"
+    },
+    "transports": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Supported transport protocols"
+    },
+    "context_collectors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "source": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      },
+      "description": "Registered context data collectors"
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "version": {"type": "string"},
+          "risk": {"type": "string"},
+          "side_effects": {"type": "string"},
+          "idempotent": {"type": "boolean"},
+          "retryable": {"type": "boolean"},
+          "concurrent_safe": {"type": "boolean"},
+          "timeout_ms": {"type": "integer"},
+          "requires_confirmation": {"type": "boolean"},
+          "determinism": {"type": "string"},
+          "latency": {"type": "string"},
+          "cost": {"type": "string"}
+        },
+        "required": ["name", "risk"]
+      },
+      "description": "All registered MCP tools with capability manifests"
+    },
+    "total_tools": {
+      "type": "integer",
+      "description": "Total number of registered tools"
+    }
+  },
+  "required": ["server", "version", "tools", "total_tools"]
+}

@@ -746,6 +746,200 @@ class TestOpenWRTExplorerEdgeCases:
         assert result["is_currently_connected"] is False
 
 
+class TestSecurityValidatorWriteCommands:
+    """Tests for write command validation."""
+
+    def test_validate_write_command_ifdown(self):
+        allowed, msg = SecurityValidator.validate_write_command("ifdown wan")
+        assert allowed is True, f"Expected ifdown wan allowed, got: {msg}"
+
+    def test_validate_write_command_ifup(self):
+        allowed, msg = SecurityValidator.validate_write_command("ifup lan")
+        assert allowed is True, f"Expected ifup lan allowed, got: {msg}"
+
+    def test_validate_write_command_network_reload(self):
+        allowed, msg = SecurityValidator.validate_write_command("/etc/init.d/network reload")
+        assert allowed is True, f"Expected network reload allowed, got: {msg}"
+
+    def test_validate_write_command_rejects_unknown(self):
+        allowed, _ = SecurityValidator.validate_write_command("reboot")
+        assert allowed is False
+
+    def test_validate_write_command_rejects_empty(self):
+        allowed, _ = SecurityValidator.validate_write_command("")
+        assert allowed is False
+
+    def test_validate_interface_name_valid(self):
+        name = SecurityValidator.validate_interface_name("wan")
+        assert name == "wan"
+
+    def test_validate_interface_name_rejects_invalid(self):
+        with pytest.raises(ValidationError):
+            SecurityValidator.validate_interface_name("../../etc/passwd")
+
+    def test_validate_interface_name_rejects_loopback(self):
+        with pytest.raises(ValidationError):
+            SecurityValidator.validate_interface_name("lo")
+
+    def test_validate_interface_name_rejects_empty(self):
+        with pytest.raises(ValidationError):
+            SecurityValidator.validate_interface_name("")
+
+    # ── Boundary tests: validate_command() MUST reject write commands ───
+
+    def test_validate_command_rejects_ifdown(self):
+        """validate_command (read-only path) must reject ifdown."""
+        allowed, _ = SecurityValidator.validate_command("ifdown wan")
+        assert allowed is False, "validate_command should reject ifdown"
+
+    def test_validate_command_rejects_ifup(self):
+        """validate_command must reject ifup."""
+        allowed, _ = SecurityValidator.validate_command("ifup lan")
+        assert allowed is False, "validate_command should reject ifup"
+
+    def test_validate_command_rejects_uci_set(self):
+        """validate_command must reject uci set."""
+        allowed, _ = SecurityValidator.validate_command("uci set network.wan.ipaddr=10.0.0.1")
+        assert allowed is False, "validate_command should reject uci set"
+
+    def test_validate_command_rejects_uci_commit(self):
+        """validate_command must reject uci commit."""
+        allowed, _ = SecurityValidator.validate_command("uci commit network")
+        assert allowed is False, "validate_command should reject uci commit"
+
+    def test_validate_command_rejects_reboot(self):
+        """validate_command must reject ubus call system reboot."""
+        allowed, _ = SecurityValidator.validate_command("ubus call system reboot")
+        assert allowed is False, "validate_command should reject ubus reboot"
+
+    def test_validate_command_rejects_network_reload(self):
+        """validate_command must reject /etc/init.d/network reload."""
+        allowed, _ = SecurityValidator.validate_command("/etc/init.d/network reload")
+        assert allowed is False, "validate_command should reject network reload"
+
+    # ── Boundary tests: validate_write_command() must accept write-only commands ───
+
+    def test_validate_write_command_accepts_uci_set(self):
+        """validate_write_command must accept uci set with valid params."""
+        allowed, msg = SecurityValidator.validate_write_command(
+            "uci set network.wan.ipaddr=10.0.0.1"
+        )
+        assert allowed is True, f"Expected uci set allowed, got: {msg}"
+
+    def test_validate_write_command_accepts_reboot(self):
+        """validate_write_command must accept ubus call system reboot."""
+        allowed, msg = SecurityValidator.validate_write_command("ubus call system reboot")
+        assert allowed is True, f"Expected reboot allowed, got: {msg}"
+
+
+class TestOpenWRTExplorerNewMethods:
+    """Tests for new explorer methods (get_router_context, describe_capabilities)."""
+
+    @pytest.mark.asyncio
+    async def test_get_router_context_returns_structure(self, mock_openwrt_ssh, openwrt_env):
+        """get_router_context should return a dict with expected top-level keys."""
+        explorer = OpenWRTExplorer()
+        await explorer.ssh.connect()
+        result = await explorer.get_router_context()
+        assert "device_id" in result
+        assert "model" in result
+        assert "schema_version" in result
+        assert result["schema_version"] == "1.0"
+        assert "subsections" in result
+
+    @pytest.mark.asyncio
+    async def test_get_router_context_has_known_device_id(self, mock_openwrt_ssh, openwrt_env):
+        """get_router_context should populate device_id from system info."""
+        explorer = OpenWRTExplorer()
+        await explorer.ssh.connect()
+        result = await explorer.get_router_context()
+        assert result.get("device_id") == "OpenWrt"
+        assert result.get("model") is not None
+
+    def test_describe_capabilities_returns_structure(self):
+        """describe_capabilities should return expected keys."""
+        explorer = OpenWRTExplorer()
+        result = explorer.describe_capabilities()
+        assert result["server"] == "OpenWRT-Observer"
+        assert "context_collectors" in result
+        assert "transports" in result
+        assert len(result["context_collectors"]) >= 8
+
+    def test_describe_capabilities_has_sse_transport(self):
+        """describe_capabilities should include sse and rest transports."""
+        explorer = OpenWRTExplorer()
+        result = explorer.describe_capabilities()
+        assert "sse" in result["transports"]
+        assert "rest" in result["transports"]
+
+    @pytest.mark.asyncio
+    async def test_get_router_context_partial_system_failure(self, mock_openwrt_ssh, openwrt_env):
+        """get_router_context should handle sub-call failure with graceful degradation."""
+        explorer = OpenWRTExplorer()
+        await explorer.ssh.connect()
+        original_execute = explorer.ssh.execute
+
+        async def fail_system(cmd):
+            if "system board" in cmd:
+                return "", "connection refused", 1
+            return await original_execute(cmd)
+
+        explorer.ssh.execute = fail_system
+        result = await explorer.get_router_context()
+        assert "subsections" in result
+        assert result["subsections"]["system"]["success"] is False
+        assert "device_id" in result
+
+    def test_describe_capabilities_does_not_require_ssh(self):
+        """describe_capabilities is synchronous, does not use SSH, always works."""
+        explorer = OpenWRTExplorer()
+        result = explorer.describe_capabilities()
+        assert result["server"] == "OpenWRT-Observer"
+        assert "context_collectors" in result
+        assert len(result["context_collectors"]) >= 8
+
+
+class TestNewExplorerMethods:
+    """Tests for new explorer methods (ping, traceroute, nslookup, wifi_scan)."""
+
+    @pytest.mark.asyncio
+    async def test_ping_host_reachable(self, mock_openwrt_ssh, openwrt_env):
+        """ping_host should return reachable=True for successful pings."""
+        explorer = OpenWRTExplorer()
+        await explorer.ssh.connect()
+        result = await explorer.ping_host("8.8.8.8")
+        assert result["success"] is True
+        assert result["reachable"] is True
+        assert result["host"] == "8.8.8.8"
+
+    @pytest.mark.asyncio
+    async def test_traceroute_host(self, mock_openwrt_ssh, openwrt_env):
+        """traceroute_host should return success."""
+        explorer = OpenWRTExplorer()
+        await explorer.ssh.connect()
+        result = await explorer.traceroute_host("8.8.8.8")
+        assert result["host"] == "8.8.8.8"
+        assert "output" in result
+
+    @pytest.mark.asyncio
+    async def test_nslookup_host(self, mock_openwrt_ssh, openwrt_env):
+        """nslookup_host should return resolved status."""
+        explorer = OpenWRTExplorer()
+        await explorer.ssh.connect()
+        result = await explorer.nslookup_host("google.com")
+        assert result["host"] == "google.com"
+        assert "resolved" in result
+
+    @pytest.mark.asyncio
+    async def test_wifi_scan(self, mock_openwrt_ssh, openwrt_env):
+        """wifi_scan should return networks list."""
+        explorer = OpenWRTExplorer()
+        await explorer.ssh.connect()
+        result = await explorer.wifi_scan("wlan0")
+        assert result["success"] is True
+        assert result["radio"] == "wlan0"
+
+
 class TestServerHelpers:
     """Tests for server helper functions."""
 
