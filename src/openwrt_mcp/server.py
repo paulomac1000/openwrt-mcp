@@ -136,23 +136,18 @@ def get_all_tools() -> dict[str, Any]:
 
 def _list_tools_sync() -> dict[str, Any]:
     """Call mcp.list_tools() synchronously. Thread-safe."""
-    with _cache_lock:
-        if _tool_cache:
-            return _tool_cache
-        try:  # pragma: no cover
-            loop = asyncio.new_event_loop()
-            tools_result: list[Any] = loop.run_until_complete(
-                mcp.list_tools()  # type: ignore[attr-defined]
-            )
-            loop.close()
-            cache: dict[str, Any] = {}
-            for t in tools_result:
-                name = getattr(t, "name", None)
-                if name:
-                    cache[name] = t
-            return cache
-        except Exception:  # pragma: no cover
-            return {}
+    list_tools_method = getattr(mcp, "list_tools", None)
+    if list_tools_method is None:
+        return {}
+    loop = asyncio.new_event_loop()
+    tools_result: list[Any] = loop.run_until_complete(list_tools_method())
+    loop.close()
+    cache: dict[str, Any] = {}
+    for t in tools_result:
+        name = getattr(t, "name", None)
+        if name:
+            cache[name] = t
+    return cache
 
 
 def get_tool(name: str) -> Any | None:
