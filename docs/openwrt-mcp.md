@@ -158,6 +158,30 @@ Extended error (L2+):
 
 ## STATE
 
+### FastMCP Version Compatibility Layer
+
+The project probes **four** tool storage locations in priority order
+to remain compatible across FastMCP major versions (2.x and 3.x):
+
+1. `_tool_manager._tools` dict — FastMCP 2.x primary
+2. `_tools` dict — FastMCP 2.x alternate
+3. `.tools` dict — FastMCP 2.x legacy
+4. `list_tools()` async method — FastMCP 3.x
+
+**Rule:** Every component that introspects FastMCP internals MUST
+probe all four locations. This includes:
+
+| Component | File | Status |
+|-----------|------|--------|
+| `get_all_tools()` | `server.py:121-134` | compliant |
+| Manifest attachment | `registration.py:893-907` | compliant |
+| `MCPWrapper._discover_tools()` | `tests/integration/mcp_wrapper.py` | compliant |
+| `mock_mcp` fixture | `tests/unit/test_mcp_tools.py` | N/A (bypasses FastMCP) |
+
+When calling `list_tools()` (async), use `getattr(mcp, "list_tools", None)` +
+`asyncio.new_event_loop()` + `run_until_complete()` —
+never `asyncio.run()` inside an existing event loop context.
+
 ### Project Structure
 
 ```

@@ -35,6 +35,11 @@
 - Docker base image: `python:3.13-slim` → `python:3.14-slim`
 - fastmcp: `>=2.0.0,<3.0.0` → `>=3.2.4,<4.0.0`
 - `server.py`: `get_all_tools()` supports FastMCP 3.x (lazy cache via `list_tools`)
+- `ci.yml`: lint/test unified to Python 3.14, `--tb=short` → `--tb=long`
+
+### Fixed
+- `MCPWrapper._discover_tools()` — added 4th probe `list_tools()` for FastMCP 3.x compatibility
+  (all 5 mocked write tool wrappers now discoverable on FastMCP 3.2.4 / Python 3.14)
 
 ### Removed
 - Device registry (`db/` package and related tools) — out of scope
