@@ -1,18 +1,53 @@
----
-description: Version history and notable changes for OpenWRT-MCP
-doc_id: ref.changelog
-type: ref
-status: active
-rigor_tier: L0
-ttl_days: 365
-stability: stable
-ai_scope: review_only
-source_of_truth: true
-last_verified: 2026-05-11
-owners: ["backend-team"]
----
-
 # Changelog
+
+## [1.2.0] — 2026-05-12
+
+### Added
+- `get_router_context` — unified router context snapshot (system, wifi, DHCP, connectivity)
+- `describe_router_capabilities` — server introspection with tool manifests
+- `uci_set`, `uci_commit` — UCI write/commit tools (requires `ENABLE_WRITE_OPERATIONS=1`)
+- `reboot_device` — router reboot (requires `ENABLE_WRITE_OPERATIONS=1`)
+- `restart_interface` — restart network interface (requires `ENABLE_WRITE_OPERATIONS=1`)
+- `reload_network` — reload network services (requires `ENABLE_WRITE_OPERATIONS=1`)
+- `ping_host`, `traceroute_host`, `nslookup_host` — standalone network diagnostic tools
+- `wifi_scan` — neighboring WiFi network survey
+- `ENABLE_WRITE_OPERATIONS` environment variable (default: false)
+- `SSHConnection.execute_write()` — separate write command validation path
+- Write command validation in `SecurityValidator` (interface name, loopback protection)
+- `_inject_risk_prefixes()` — dynamic risk prefix injection from manifest SSOT
+- `UbusClient` — ubus JSON-RPC transport module
+- `cat /proc/loadavg` added to allowed read-only patterns
+- JSON Schema documentation (`schema/`)
+- `RISKS_AND_CAVEATS` section in documentation (write tool risks, mock strategy)
+
+### Changed
+- Registered tools: `13` → `24`
+- Writer module (`writer.py`) now uses `execute_write()` for all write operations
+- Integration tests now skip when `OPENWRT_HOST` is not set
+- `MCPWrapper` uses shared event loop for persistent SSH connections
+- `.env` loaded from `conftest.py` for consistent env var injection
+- Integration tests with real OpenWRT router added (19 READ tools)
+- Mock integration tests for dangerous write tools added (10 tests)
+- `timeout_seconds: int | None = None` → `int = SSH_TIMEOUT` for all I/O tools (fixes MCP SSE transport)
+- `request_id` (UUID) included in SSH connection log lines for traceability
+- `ci.yml`: integration tests accept exit code 5 (skip when OPENWRT_HOST not set)
+- `ci.yml`: docker smoke tool count check `13` → `24`
+- Docker base image: `python:3.13-slim` → `python:3.14-slim`
+- fastmcp: `>=2.0.0,<3.0.0` → `>=3.2.4,<4.0.0`
+- `server.py`: `get_all_tools()` supports FastMCP 3.x (lazy cache via `list_tools`)
+- `ci.yml`: lint/test unified to Python 3.14, `--tb=short` → `--tb=long`
+
+### Fixed
+- `MCPWrapper._discover_tools()` — added 4th probe `list_tools()` for FastMCP 3.x compatibility
+  (all 5 mocked write tool wrappers now discoverable on FastMCP 3.2.4 / Python 3.14)
+
+### Removed
+- Device registry (`db/` package and related tools) — out of scope
+
+### Metrics
+- Coverage: 86%
+- 279 tests (200 unit + 53 integration + 8 smoke + 18 e2e)
+- 0 errors: ruff / mypy --strict / bandit -ll
 
 ## [1.1.0] — 2026-05-11
 

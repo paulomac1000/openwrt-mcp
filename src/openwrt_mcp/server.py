@@ -9,6 +9,7 @@ Architecture:
 - Port 9096: REST API (Starlette) - /api/*
 """
 
+import asyncio
 import inspect
 import json
 import logging
@@ -108,20 +109,45 @@ mcp = FastMCP("OpenWRT-Observer")
 
 register_openwrt_tools(mcp)
 
-
 # =============================================================================
 # TOOL HELPERS
 # =============================================================================
 
 
+_cache_lock = threading.Lock()
+_tool_cache: dict[str, Any] = {}
+
+
 def get_all_tools() -> dict[str, Any]:
-    """Return a dictionary of all registered tools."""
-    tools: dict[str, Any] = {}
+    """Return a dictionary of all registered tools.
+
+    Supports FastMCP 2.x (_tool_manager._tools, _tools) and 3.x (list_tools async).
+    Lazy-populates the internal cache on first call for FastMCP 3.x.
+    """
+    global _tool_cache
     if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
-        tools = mcp._tool_manager._tools
-    elif hasattr(mcp, "_tools"):
-        tools = mcp._tools
-    return tools
+        return dict(mcp._tool_manager._tools)
+    if hasattr(mcp, "_tools"):
+        return dict(mcp._tools)
+    if hasattr(mcp, "list_tools") and not _tool_cache:
+        _tool_cache = _list_tools_sync()
+    return _tool_cache
+
+
+def _list_tools_sync() -> dict[str, Any]:
+    """Call mcp.list_tools() synchronously. Thread-safe."""
+    list_tools_method = getattr(mcp, "list_tools", None)
+    if list_tools_method is None:
+        return {}
+    loop = asyncio.new_event_loop()
+    tools_result: list[Any] = loop.run_until_complete(list_tools_method())
+    loop.close()
+    cache: dict[str, Any] = {}
+    for t in tools_result:
+        name = getattr(t, "name", None)
+        if name:
+            cache[name] = t
+    return cache
 
 
 def get_tool(name: str) -> Any | None:
@@ -169,7 +195,7 @@ def create_rest_app() -> Any:
             {
                 "status": "healthy",
                 "server": "OpenWRT-Observer",
-                "version": "1.1.0",
+                "version": "1.2.0",
                 "tools_registered": get_tool_count(),
                 "tool_invocations": counts,
                 "total_invocations": sum(counts.values()),

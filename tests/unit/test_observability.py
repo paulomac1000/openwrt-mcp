@@ -36,7 +36,7 @@ class TestObservability:
         assert "request_id" in meta
         assert "duration_ms" in meta
         assert isinstance(meta["duration_ms"], int)
-        assert meta["tool_version"] == "1.1.0"
+        assert meta["tool_version"] == "1.2.0"
         assert "cached" in meta
         assert "retry_safe" in meta
 

@@ -14,22 +14,50 @@ class MCPWrapper:
 
     Probes multiple internal storage locations and callable attributes
     to remain compatible across FastMCP version upgrades.
+
+    Uses a single shared event loop for all async calls so that
+    persistent connections (SSH, etc.) work across multiple invocations.
     """
 
     def __init__(self, mcp: Any) -> None:
         self._mcp = mcp
         self._tools: dict[str, Any] = self._discover_tools()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def _discover_tools(self) -> dict[str, Any]:
-        """Probe known tool storage locations."""
+        """Probe known tool storage locations.
+
+        Probes 4 locations in priority order to remain compatible across
+        FastMCP 2.x and 3.x: _tool_manager._tools → _tools → tools →
+        list_tools() async fallback.
+        """
+        # 1. FastMCP 2.x primary
         if hasattr(self._mcp, "_tool_manager") and hasattr(self._mcp._tool_manager, "_tools"):
             return dict(self._mcp._tool_manager._tools)
+        # 2. FastMCP 2.x alternate
         if hasattr(self._mcp, "_tools"):
             return dict(self._mcp._tools)
+        # 3. FastMCP 2.x legacy
         if hasattr(self._mcp, "tools"):
             val = self._mcp.tools
             if isinstance(val, dict):
                 return dict(val)
+        # 4. FastMCP 3.x: async list_tools()
+        list_tools_method = getattr(self._mcp, "list_tools", None)
+        if list_tools_method is not None:
+            loop = asyncio.new_event_loop()
+            try:
+                tools_result: list[Any] = loop.run_until_complete(list_tools_method())
+                result: dict[str, Any] = {}
+                for t in tools_result:
+                    name = getattr(t, "name", None)
+                    if name:
+                        result[name] = t
+                return result
+            except Exception:
+                pass
+            finally:
+                loop.close()
         return {}
 
     def _unwrap_tool(self, tool: Any) -> Any:
@@ -55,11 +83,13 @@ class MCPWrapper:
         fn = self._unwrap_tool(tool)
 
         if inspect.iscoroutinefunction(fn):
-            loop = asyncio.new_event_loop()
+            if self._loop is None or self._loop.is_closed():
+                self._loop = asyncio.new_event_loop()
+            loop = self._loop
             try:
                 result = loop.run_until_complete(fn(**kwargs))
             finally:
-                loop.close()
+                pass
         else:
             result = fn(**kwargs)
 

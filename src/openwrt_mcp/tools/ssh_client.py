@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from openwrt_mcp.observability import get_request_id
 from openwrt_mcp.tools.constants import (
     AUDIT_LOG_FILE,
     ENABLE_AUDIT_LOGGING,
@@ -70,11 +71,14 @@ class SSHConnection:
 
                 self._connection = await asyncssh.connect(**connect_kwargs)
                 self._last_activity = time.time()
-                logging.info(f"[openwrt] SSH connection established: {OPENWRT_USER}@{OPENWRT_HOST}")
+                logging.info(
+                    f"[{get_request_id()}] [openwrt] SSH connection established:"
+                    f" {OPENWRT_USER}@{OPENWRT_HOST}"
+                )
                 return True
 
             except Exception as e:
-                error_msg = f"[openwrt] SSH connection error: {str(e)}"
+                error_msg = f"[{get_request_id()}] [openwrt] SSH connection error: {str(e)}"
                 logging.error(error_msg)
                 return False
 
@@ -89,7 +93,9 @@ class SSHConnection:
         # SECURITY: Validate command before execution
         is_valid, msg = SecurityValidator.validate_command(command)
         if not is_valid:
-            logging.warning(f"[openwrt] Command rejected: {command[:50]}... - {msg}")
+            logging.warning(
+                f"[{get_request_id()}] [openwrt] Command rejected: {command[:50]}... - {msg}"
+            )
             return "", f"Security denial: {msg}", 1
 
         # SECURITY: Additional sanitation (defense in depth)
@@ -109,7 +115,9 @@ class SSHConnection:
             return result.stdout, result.stderr, result.exit_status
 
         except (asyncssh.ConnectionLost, asyncssh.DisconnectError, OSError) as e:
-            logging.warning(f"[openwrt] SSH connection lost ({e}), attempting reconnect...")
+            logging.warning(
+                f"[{get_request_id()}] [openwrt] SSH connection lost ({e}), attempting reconnect..."
+            )
             if await self.connect():
                 try:
                     result = await self._connection.run(safe_cmd, timeout=timeout)
@@ -127,6 +135,55 @@ class SSHConnection:
 
         finally:
             self._timeout = SSH_TIMEOUT  # always reset to default
+
+    async def execute_write(self, command: str) -> tuple[str, str, int]:
+        """Execute a write operation on the router over SSH.
+
+        Uses ALLOWED_WRITE_PATTERNS instead of ALLOWED_PATTERNS for validation.
+        Only used by write tools (restart_interface, uci_set, etc.).
+        """
+        import asyncssh
+
+        if not self._connection:
+            if not await self.connect():
+                return "", "No SSH connection", 1
+
+        is_valid, msg = SecurityValidator.validate_write_command(command)
+        if not is_valid:
+            logging.warning(
+                f"[{get_request_id()}] [openwrt] Write command rejected: {command[:50]}... - {msg}"
+            )
+            return "", f"Security denial: {msg}", 1
+
+        safe_cmd = command.strip()
+        if self._cancelled.is_set():
+            return "", "Operation cancelled", 1
+        if ENABLE_AUDIT_LOGGING:
+            self._log_audit(safe_cmd)
+        timeout = self._timeout
+        try:
+            result = await self._connection.run(safe_cmd, timeout=timeout)
+            self._last_activity = time.time()
+            return result.stdout, result.stderr, result.exit_status
+        except (asyncssh.ConnectionLost, asyncssh.DisconnectError, OSError) as e:
+            logging.warning(
+                f"[{get_request_id()}] [openwrt] SSH connection lost during write ({e}),"
+                " attempting reconnect..."
+            )
+            if await self.connect():
+                try:
+                    result = await self._connection.run(safe_cmd, timeout=timeout)
+                    self._last_activity = time.time()
+                    return result.stdout, result.stderr, result.exit_status
+                except Exception as retry_err:
+                    return "", str(retry_err), 1
+            return "", str(e), 1
+        except asyncssh.TimeoutError:
+            return "", f"Timeout after {timeout}s: {safe_cmd[:30]}...", 124
+        except Exception as e:
+            return "", f"Execution error: {str(e)}", 1
+        finally:
+            self._timeout = SSH_TIMEOUT
 
     def _log_audit(self, command: str) -> None:
         try:

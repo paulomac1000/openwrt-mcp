@@ -8,7 +8,8 @@ ttl_days: 180
 stability: stable
 ai_scope: editable
 source_of_truth: true
-last_verified: 2026-05-11
+upstream: []
+last_verified: 2026-05-13
 owners: ["backend-team"]
 ---
 

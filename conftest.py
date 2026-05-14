@@ -1,11 +1,29 @@
 """
 Test fixtures for OpenWRT-MCP unit tests.
+
+CAUTION: .env MUST be loaded here at project level, before any test file or
+openwrt_mcp module is imported. This ensures os.getenv() in constants.py
+picks up the correct values.
 """
 
 import json
+import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+# Load .env before any test runs — env vars must be set before constants.py
+# evaluates os.getenv(). This runs at import time, which precedes any test
+# file import due to pytest's conftest discovery order.
+_env_path = Path(__file__).resolve().parent / ".env"
+if _env_path.exists():
+    with open(_env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 # Mock data for OpenWRT responses
 MOCK_BOARD_JSON = json.dumps(
@@ -84,6 +102,27 @@ def _make_run_mock():
             stdout = "Apr 23 10:00:00 OpenWrt dnsmasq[1]: DHCPACK(br-lan) 192.168.0.100 abc\n"
         elif "ping" in cmd:
             stdout = "64 bytes from 8.8.8.8: seq=0 ttl=118 time=15.2 ms\n"
+        elif "traceroute" in cmd:
+            stdout = (
+                "traceroute to 8.8.8.8 (8.8.8.8), 30 hops max\n"
+                " 1  192.168.1.1  0.5 ms\n 2  10.0.0.1  2.0 ms\n"
+            )
+        elif "nslookup" in cmd:
+            stdout = (
+                "Server:  8.8.8.8\nAddress: 8.8.8.8#53\nName: google.com\nAddress: 142.250.80.46\n"
+            )
+        elif "iwinfo" in cmd and "scan" in cmd:
+            stdout = (
+                "Cell 01 - Address: AA:BB:CC:DD:EE:01\n"
+                '  ESSID: "NeighborNet"\n  Mode: Master  Channel: 6\n'
+                "  Signal level: -65 dBm\n"
+            )
+        elif "uci set" in cmd:
+            stdout = ""
+        elif "uci commit" in cmd:
+            stdout = ""
+        elif "ubus call system reboot" in cmd:
+            stdout = ""
         else:
             stdout = "{}"
         return MagicMock(stdout=stdout, stderr=stderr, exit_status=exit_status)

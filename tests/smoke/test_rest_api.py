@@ -38,7 +38,7 @@ class TestHealthEndpoint:
         data = r.json()
         assert data["status"] == "healthy"
         assert "tools_registered" in data
-        assert data["tools_registered"] == 13
+        assert data["tools_registered"] == 24
 
     def test_health_includes_version(self):
         r = requests.get(f"{BASE_URL}/api/health", timeout=5)
@@ -53,24 +53,24 @@ class TestHealthEndpoint:
 
 
 class TestToolsEndpoint:
-    """Verify tools list endpoint returns all 13 tools."""
+    """Verify tools list endpoint returns all 24 tools."""
 
     def test_list_tools_returns_all(self):
         r = requests.get(f"{BASE_URL}/api/tools", timeout=5)
         assert r.status_code == 200
         data = r.json()
         assert data["success"] is True
-        assert data["total"] == 13
-        assert len(data["tools"]) == 13
+        assert data["total"] == 24
+        assert len(data["tools"]) == 24
 
-    def test_every_tool_has_description(self):
+    def test_every_tool_has_risk_prefix(self):
         r = requests.get(f"{BASE_URL}/api/tools", timeout=5)
         data = r.json()
         for tool in data["tools"]:
             desc = tool.get("description")
             assert desc is not None, f"Tool '{tool['name']}' has no description"
-            assert desc.startswith("[READ]"), (
-                f"Tool '{tool['name']}' description missing [READ] prefix: {desc[:30]}"
+            assert desc.startswith("[READ]") or desc.startswith("[WRITE]"), (
+                f"Tool '{tool['name']}' description missing risk prefix: {desc[:30]}"
             )
 
     def test_unknown_tool_returns_404(self):
