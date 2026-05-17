@@ -72,14 +72,12 @@ class SSHConnection:
                 self._connection = await asyncssh.connect(**connect_kwargs)
                 self._last_activity = time.time()
                 logging.info(
-                    f"[{get_request_id()}] [openwrt] SSH connection established:"
-                    f" {OPENWRT_USER}@{OPENWRT_HOST}"
+                    "[openwrt] SSH connection established: %s@%s", OPENWRT_USER, OPENWRT_HOST
                 )
                 return True
 
             except Exception as e:
-                error_msg = f"[{get_request_id()}] [openwrt] SSH connection error: {str(e)}"
-                logging.error(error_msg)
+                logging.error("[openwrt] SSH connection error: %s", str(e))
                 return False
 
     async def execute(self, command: str) -> tuple[str, str, int]:
@@ -93,9 +91,7 @@ class SSHConnection:
         # SECURITY: Validate command before execution
         is_valid, msg = SecurityValidator.validate_command(command)
         if not is_valid:
-            logging.warning(
-                f"[{get_request_id()}] [openwrt] Command rejected: {command[:50]}... - {msg}"
-            )
+            logging.warning("[openwrt] Command rejected: %s... - %s", command[:50], msg)
             return "", f"Security denial: {msg}", 1
 
         # SECURITY: Additional sanitation (defense in depth)
@@ -115,9 +111,7 @@ class SSHConnection:
             return result.stdout, result.stderr, result.exit_status
 
         except (asyncssh.ConnectionLost, asyncssh.DisconnectError, OSError) as e:
-            logging.warning(
-                f"[{get_request_id()}] [openwrt] SSH connection lost ({e}), attempting reconnect..."
-            )
+            logging.warning("[openwrt] SSH connection lost (%s), attempting reconnect...", e)
             if await self.connect():
                 try:
                     result = await self._connection.run(safe_cmd, timeout=timeout)
@@ -150,9 +144,7 @@ class SSHConnection:
 
         is_valid, msg = SecurityValidator.validate_write_command(command)
         if not is_valid:
-            logging.warning(
-                f"[{get_request_id()}] [openwrt] Write command rejected: {command[:50]}... - {msg}"
-            )
+            logging.warning("[openwrt] Write command rejected: %s... - %s", command[:50], msg)
             return "", f"Security denial: {msg}", 1
 
         safe_cmd = command.strip()
@@ -167,8 +159,7 @@ class SSHConnection:
             return result.stdout, result.stderr, result.exit_status
         except (asyncssh.ConnectionLost, asyncssh.DisconnectError, OSError) as e:
             logging.warning(
-                f"[{get_request_id()}] [openwrt] SSH connection lost during write ({e}),"
-                " attempting reconnect..."
+                "[openwrt] SSH connection lost during write (%s), attempting reconnect...", e
             )
             if await self.connect():
                 try:
@@ -188,7 +179,9 @@ class SSHConnection:
     def _log_audit(self, command: str) -> None:
         try:
             timestamp = datetime.now().isoformat()
-            log_entry = f"{timestamp} | {OPENWRT_USER}@{OPENWRT_HOST} | {command}\n"
+            log_entry = (
+                f"{timestamp} | {get_request_id()} | {OPENWRT_USER}@{OPENWRT_HOST} | {command}\n"
+            )
             log_path = Path(AUDIT_LOG_FILE)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with open(log_path, "a", encoding="utf-8") as f:

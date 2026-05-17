@@ -3,10 +3,17 @@
 import json
 from typing import Any
 
+from openwrt_mcp.sanitizer import sanitize_response_data
+
 
 def _success_response(data: Any, _meta: dict[str, Any] | None = None) -> str:
-    """Format a successful tool response with optional _meta envelope."""
-    response: dict[str, Any] = {"success": True, "data": data}
+    """Format a successful tool response with optional _meta envelope.
+
+    The payload is routed through ``sanitize_response_data()`` at this
+    boundary (Canonical Template 4b) so a tool that forgets to sanitize
+    cannot leak a credential to the agent.
+    """
+    response: dict[str, Any] = {"success": True, "data": sanitize_response_data(data)}
     if _meta is not None:
         response["_meta"] = _meta
     return json.dumps(response)

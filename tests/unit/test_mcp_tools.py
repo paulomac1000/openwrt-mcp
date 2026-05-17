@@ -18,8 +18,10 @@ class TestResponseHelpers:
     """Tests for _success_response and _error_response."""
 
     def test_success_response(self):
-        result = json.loads(_success_response({"key": "value"}))
-        assert result == {"success": True, "data": {"key": "value"}}
+        # Note: a field literally named "key" is treated as a secret by the
+        # response sanitizer, so this structural test uses a neutral field.
+        result = json.loads(_success_response({"field": "value"}))
+        assert result == {"success": True, "data": {"field": "value"}}
 
     def test_success_response_with_list(self):
         result = json.loads(_success_response([1, 2, 3]))
@@ -56,28 +58,6 @@ class TestResponseHelpers:
         )
         assert result["success"] is False
         assert result["error"]["available_names"] == ["Kitchen", "LivingRoom"]
-
-
-@pytest.fixture
-def mock_mcp():
-    """Mock MCP instance that stores registered tools — Canonical Template 9."""
-    mcp = MagicMock()
-    mcp._tools = {}
-
-    def tool_decorator(*args, **kwargs):
-        def wrapper(func):
-            tool_name = kwargs.get("name", func.__name__)
-            mcp._tools[tool_name] = func
-            return func
-
-        if len(args) == 1 and callable(args[0]) and not kwargs:
-            mcp._tools[args[0].__name__] = args[0]
-            return args[0]
-        return wrapper
-
-    mcp.tool = tool_decorator
-    mcp.get_tool = lambda name: mcp._tools.get(name)
-    return mcp
 
 
 class TestToolRegistration:

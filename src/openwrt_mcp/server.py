@@ -22,6 +22,9 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from openwrt_mcp import __version__
+from openwrt_mcp.observability import get_request_id
+from openwrt_mcp.sanitizer import sanitize_log_line
 from openwrt_mcp.tools.constants import LOG_LEVEL, MCP_SSE_PORT, OPENWRT_SSH_KEY, REST_API_PORT
 from openwrt_mcp.tools.registration import register_openwrt_tools
 
@@ -29,18 +32,51 @@ from openwrt_mcp.tools.registration import register_openwrt_tools
 # LOGGING CONFIGURATION
 # =============================================================================
 
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    stream=sys.stderr,
-)
+
+class RequestIdFilter(logging.Filter):
+    """Inject the current request_id into every log record (Template 4a)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = get_request_id()
+        return True
+
+
+class SanitizingFormatter(logging.Formatter):
+    """Redact credentials and IP addresses from every formatted log line."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return sanitize_log_line(super().format(record))
+
+
+def setup_logging() -> None:
+    """Configure stderr logging with request-id context and secret redaction.
+
+    Sanitization enforced at the logging infrastructure level cannot be
+    bypassed by a developer forgetting to call sanitize_log_line() manually.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        SanitizingFormatter("%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s")
+    )
+    handler.addFilter(RequestIdFilter())
+    root = logging.getLogger()
+    root.addHandler(handler)
+    root.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
+
+
+setup_logging()
 logger = logging.getLogger("openwrt-mcp")
 
 # =============================================================================
 # HEALTH CHECK SERVER (port 9094)
 # =============================================================================
 
-HEALTH_STATE = {"status": "starting", "last_heartbeat": time.time()}
+HEALTH_STATE: dict[str, Any] = {
+    "status": "starting",
+    "last_heartbeat": time.time(),
+    "tools": 0,
+    "tools_version": __version__,
+}
 _health_lock = threading.Lock()
 
 
@@ -195,7 +231,7 @@ def create_rest_app() -> Any:
             {
                 "status": "healthy",
                 "server": "OpenWRT-Observer",
-                "version": "1.2.0",
+                "version": __version__,
                 "tools_registered": get_tool_count(),
                 "tool_invocations": counts,
                 "total_invocations": sum(counts.values()),
@@ -348,6 +384,7 @@ def main() -> None:
     with _health_lock:
         HEALTH_STATE["status"] = "healthy"
         HEALTH_STATE["last_heartbeat"] = time.time()
+        HEALTH_STATE["tools"] = tool_count
 
     logger.info("OpenWRT-Observer MCP Server starting")
     logger.info("OpenWRT Host: %s:%s", OPENWRT_HOST, OPENWRT_PORT)

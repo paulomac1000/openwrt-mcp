@@ -101,6 +101,7 @@ curl http://localhost:9096/api/tools/get_router_info/manifest
 
 Tools are categorized by risk level: **[READ]** tools are safe — they query the router with no side effects.
 **[WRITE]** tools can modify router state and require `ENABLE_WRITE_OPERATIONS=1` in `.env`.
+**[DESTRUCTIVE]** tools are irreversible (reboot) and require explicit confirmation.
 
 | Category | Tool | Risk | Description |
 |----------|------|------|-------------|
@@ -127,7 +128,7 @@ Tools are categorized by risk level: **[READ]** tools are safe — they query th
 | | `uci_commit` | WRITE | Commit UCI changes permanently |
 | | `restart_interface` | WRITE | Restart a network interface |
 | | `reload_network` | WRITE | Reload network services |
-| | `reboot_device` | WRITE | Reboot the router |
+| | `reboot_device` | DESTRUCTIVE | Reboot the router (irreversible) |
 
 ## Configuration
 
@@ -175,13 +176,13 @@ This server follows two AI-First standards:
 | **AFDS** | [`docs_standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/afds-doc-writer/docs_standards.md) | v1.0 | Documentation structure, frontmatter schema, controlled language |
 | **MCP Core** | [`mcp_standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/mcp-server-architect/mcp_standards.md) | v1.1.0 | Tool design, response contracts, testing hierarchy, security |
 
-Compliance level: **L2+** (all mandatory and recommended rules met). The MCP standard v1.1.0 features (Write Guard, `impact`/`privacy`/`reversible` manifest fields) were validated against this project's implementation. See `docs/openwrt-mcp.md` for the full reference.
+Compliance level: **L3-ready** (all L1-L3 rules met; Risk Consistency Matrix enforced by automated tests).
 
 ## Testing
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/unit/ tests/integration/ -q       # 253 tests (requires .env for integration)
+pytest tests/unit/ tests/integration/ -q       # 268 tests (requires .env for integration)
 pytest tests/unit/ --cov=openwrt_mcp -q         # 80%+ coverage
 ruff check . && ruff format --check .           # lint
 mypy src/openwrt_mcp/ --strict                  # type check
@@ -193,8 +194,8 @@ bandit -r src/openwrt_mcp/ -ll                  # security
 | Metric | Value |
 |--------|-------|
 | Python | 3.13+ (Docker: 3.14) |
-| Tools | 24 (19 READ + 5 WRITE) |
-| Tests | 253 (unit + integration); 279 total (with smoke + e2e) |
+| Tools | 24 (19 READ + 4 WRITE + 1 DESTRUCTIVE) |
+| Tests | 296 (215 unit + 53 integration + 10 smoke + 18 e2e) |
 | Coverage | 86% |
 | Lint | 0 errors (ruff + mypy --strict + bandit) |
 | Docker | `ghcr.io/paulomac1000/openwrt-mcp:latest` |
