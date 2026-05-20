@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/ci.yml)
 [![Docker](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/publish.yml/badge.svg)](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/publish.yml)
-[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue)](https://www.python.org/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Read-only MCP (Model Context Protocol) server for OpenWRT router management and diagnostics.
@@ -11,7 +11,7 @@ router without any write access.
 
 ## Requirements
 
-- Python 3.13+ (for local use) or Docker
+- Python 3.14+ (for local use) or Docker
 - OpenWRT router with SSH enabled (Dropbear or OpenSSH)
 - SSH key pair for authentication
 
@@ -64,7 +64,7 @@ docker build -t openwrt-mcp .
 # Then run with the same docker run command above
 ```
 
-### 4. Run locally (Python 3.13+)
+### 4. Run locally (Python 3.14+)
 
 ```bash
 pip install -e ".[dev]"
@@ -174,7 +174,7 @@ This server follows two AI-First standards:
 | Standard | Document | Version | Description |
 |----------|----------|---------|-------------|
 | **AFDS** | [`docs_standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/afds-doc-writer/docs_standards.md) | v1.0 | Documentation structure, frontmatter schema, controlled language |
-| **MCP Core** | [`mcp_standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/mcp-server-architect/mcp_standards.md) | v1.1.0 | Tool design, response contracts, testing hierarchy, security |
+| **MCP Core** | [`mcp-server-standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/mcp-server-architect/mcp-server-standards.md) | v1.1.0 | Tool design, response contracts, testing hierarchy, security |
 
 Compliance level: **L3-ready** (all L1-L3 rules met; Risk Consistency Matrix enforced by automated tests).
 
@@ -193,7 +193,7 @@ bandit -r src/openwrt_mcp/ -ll                  # security
 
 | Metric | Value |
 |--------|-------|
-| Python | 3.13+ (Docker: 3.14) |
+| Python | 3.14+ (Docker: 3.14) |
 | Tools | 24 (19 READ + 4 WRITE + 1 DESTRUCTIVE) |
 | Tests | 296 (215 unit + 53 integration + 10 smoke + 18 e2e) |
 | Coverage | 86% |
