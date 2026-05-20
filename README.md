@@ -151,7 +151,7 @@ All configuration is via environment variables. See `.env.example` for a complet
 | `REST_API_PORT` | `9096` | REST API port |
 | `SSH_TIMEOUT` | `30` | SSH connection timeout (seconds) |
 | `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED` | — | Set to `1` for Docker port forwarding |
-| `ENABLE_WRITE_OPERATIONS` | `false` | Set to `1` to enable write tools (uci_set, reboot, etc.) |
+| `ENABLE_WRITE_OPERATIONS` | `false` | Set to `1` to enable write tools (uci_set, reboot, and others) |
 | `OPENWRT_PASSWORD` | `None` | SSH password (not recommended — use SSH keys) |
 | `ENABLE_AUDIT_LOGGING` | `true` | Log all executed commands |
 | `AUDIT_LOG_FILE` | `/var/log/openwrt_mcp.log` | Audit log path |
@@ -160,9 +160,9 @@ All configuration is via environment variables. See `.env.example` for a complet
 ## Security Model
 
 - **Read-only by default** — All SSH commands are whitelisted; write operations (`uci set`, `ifdown`, `ubus reboot`) require `ENABLE_WRITE_OPERATIONS=1`
-- **Command whitelist** — Explicit read-only patterns (`ubus call`, `uci show`, `cat /proc/*`, `logread`, `ping`, etc.)
+- **Command whitelist** — Explicit read-only patterns (`ubus call`, `uci show`, `cat /proc/*`, `logread`, `ping`, and others)
 - **Write command whitelist** — Separate `execute_write()` path for write operations (`ifdown`, `ifup`, `uci set/commit`, `/etc/init.d/network`, `ubus reboot`)
-- **Blocked patterns** — `rm`, `reboot`, `wget`, `curl`, `uci set` (in read path), shell metacharacters (`;`, `|`, `&&`, `$`, etc.)
+- **Blocked patterns** — `rm`, `reboot`, `wget`, `curl`, `uci set` (in read path), shell metacharacters (`;`, `|`, `&&`, `$`, and others)
 - **Key-based authentication** — Password login discouraged
 - **Audit logging** — All commands logged with timestamps for accountability
 - **Localhost binding** — All ports bind to `127.0.0.1` by default; set `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1` for Docker

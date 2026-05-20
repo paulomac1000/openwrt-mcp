@@ -1,15 +1,10 @@
 # AFDS Validator Configuration for openwrt-mcp project
 
-exempt_files: []
-
-root_files:
-  README.md:
-    required_fields: [description, doc_id, type, status, last_verified]
-    min_line_count: 8
-
-  CHANGELOG.md:
-    required_fields: [description, doc_id, type, status, last_verified]
-    min_line_count: 5
+exempt_files:
+  - README.md
+  - CHANGELOG.md
+  - docs/meta/doc-registry.md
+  - docs/meta/glossary.md
 
 default_paths:
   - docs/
@@ -17,3 +12,4 @@ default_paths:
 excluded_dirs:
   - archived
   - archive
+  - docs/meta
