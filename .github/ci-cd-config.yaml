@@ -1,0 +1,23 @@
+# CI/CD Configuration Contract — openwrt-mcp
+#
+# This file is the Single Source of Truth for all CI/CD parameters.
+# Workflow files are generated from this config using the ci-cd-architect skill.
+
+language: "python"
+src_dir: "src/openwrt_mcp/"
+package: "openwrt_mcp"
+project: "openwrt-mcp"
+python_version: "3.14"
+image_name: "openwrt-mcp:test"
+smoke_name: "openwrt-smoke"
+health_port: 9096
+rest_port: 9096
+use_docker: true
+is_mcp: true
+expected_tools: 24
+use_codecov: true
+use_semgrep: true
+use_dependabot: true
+package_ecosystems: ["github-actions", "pip"]
+use_docs_validation: false
+services: null

@@ -5,6 +5,13 @@ on:
     branches: [main]
     types: [closed]
 
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   tag:
     if: github.event.pull_request.merged == true
