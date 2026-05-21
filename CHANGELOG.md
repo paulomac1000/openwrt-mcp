@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.2.1] — 2026-05-17
+
+### Fixed — Standards Compliance (MCP Server Architect Standard v1.1.0)
+
+- **G1** `reboot_device` reclassified from `WRITE` → `DESTRUCTIVE` with correct manifest:
+  `idempotent=false`, `retryable=false`, `reversible=false`, `impact=service_outage`
+- **G2** Request ID changed from module-level global to `contextvars.ContextVar`
+  (prevents concurrent-invocation ID corruption in async handlers)
+- **G3** `build_meta()` now reads `request_id` from context instead of generating a fresh UUID
+- **G4** `sanitizer.py` — `sanitize_log_line()` redacts credentials and IPs from log output
+- **G5** `sanitize_response_data()` integrated into `_success_response()` boundary
+- **G6** `RequestIdFilter` + `SanitizingFormatter` logging pipeline; manual `[{get_request_id()}]`
+  prefixing removed from `ssh_client.py`
+- **G7** Risk Consistency Matrix test: `test_manifest_compliance.py`
+- **G8** Health server (port 9094) now returns `tools` count and `tools_version`
+- **G9** Version SSOT: `__init__.__version__` → imported by `observability.py`,
+  `registration.py`, `server.py`
+- **G10** `_log_audit()` now includes `request_id` for audit↔log correlation
+- **G11** Smoke test: `test_response_contract.py` — contract verification for all 24 tools
+
+### Added
+- `_make_destructive_manifest()` factory (Canonical Template 5c) in `registration.py`
+- `sanitizer.py` module — two trust boundaries (log lines vs response payloads)
+- `test_manifest_compliance.py` — enforces Risk Consistency Matrix for all tools
+- `test_response_contract.py` — smoke-level contract verification (`{"success": bool, ...}`)
+- `test_sanitizer.py` — unit tests for log/response sanitization
+
+### Changed
+- `mock_mcp` fixture moved from test files to `conftest.py` (shared by all unit tests)
+- `conftest.py` now exports `mock_mcp` fixture (removed duplicates from 2 test files)
+- `server.py` — `setup_logging()` with `RequestIdFilter` + `SanitizingFormatter`
+
+### Dependencies
+- Bump `actions/checkout`: `@v4` → `@v6` (GitHub Actions)
+- Bump `softprops/action-gh-release`: `@v2` → `@v3` (GitHub Actions)
+- Bump `fastmcp`: `>=3.2.4,<4.0.0` → `>=3.3.1,<4.0.0`
+- Bump `uvicorn`: `>=0.46.0` → `>=0.47.0`
+- Bump `setuptools` (build-system): `>=68.0` → `>=82.0.1`
+- Bump `mypy` (dev): `>=1.8.0` → `>=2.1.0`
+- Bump `pytest-cov` (dev): `>=4.0.0` → `>=7.1.0`
+- Bump `ruff` (dev): `>=0.4.0` → `>=0.15.13`
+- Bump `bandit` (dev): `>=1.7.0` → `>=1.9.4`
+
+### Metrics
+- 296 tests (215 unit + 53 integration + 10 smoke + 18 e2e)
+- 0 errors: ruff / mypy --strict / bandit -ll
+
 ## [1.2.0] — 2026-05-12
 
 ### Added

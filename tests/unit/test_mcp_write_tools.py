@@ -10,28 +10,6 @@ from openwrt_mcp.tools.writer import OpenWRTWriter, check_write_enabled, get_wri
 from openwrt_mcp.validators import ValidationError
 
 
-@pytest.fixture
-def mock_mcp():
-    """Mock MCP instance that stores registered tools — Canonical Template 9."""
-    mcp = MagicMock()
-    mcp._tools = {}
-
-    def tool_decorator(*args, **kwargs):
-        def wrapper(func):
-            tool_name = kwargs.get("name", func.__name__)
-            mcp._tools[tool_name] = func
-            return func
-
-        if len(args) == 1 and callable(args[0]) and not kwargs:
-            mcp._tools[args[0].__name__] = args[0]
-            return args[0]
-        return wrapper
-
-    mcp.tool = tool_decorator
-    mcp.get_tool = lambda name: mcp._tools.get(name)
-    return mcp
-
-
 class TestWriteToolsRegistration:
     """[RULE: TEST-REG-2] Unit tests for write tool registration."""
 
@@ -40,13 +18,16 @@ class TestWriteToolsRegistration:
         "reload_network",
         "uci_set",
         "uci_commit",
+    ]
+    DESTRUCTIVE_TOOLS = [
         "reboot_device",
     ]
+    GUARDED_TOOLS = WRITE_TOOLS + DESTRUCTIVE_TOOLS
 
     def test_write_tools_are_registered(self, mock_mcp):
         """Write tools should be registered along with all other tools."""
         register_openwrt_tools(mock_mcp)
-        for tool_name in self.WRITE_TOOLS:
+        for tool_name in self.GUARDED_TOOLS:
             assert tool_name in mock_mcp._tools, f"Missing tool: {tool_name}"
 
     def test_write_tools_have_correct_manifest(self, mock_mcp):
@@ -63,6 +44,23 @@ class TestWriteToolsRegistration:
             assert manifest["impact"] in ("transient", "persistent", "service_outage"), (
                 f"Tool '{tool_name}' impact should be one of transient/persistent/service_outage"
             )
+
+    def test_destructive_tools_have_correct_manifest(self, mock_mcp):
+        """Destructive tools (reboot) must be DESTRUCTIVE, irreversible, non-retryable."""
+        register_openwrt_tools(mock_mcp)
+        for tool_name in self.DESTRUCTIVE_TOOLS:
+            tool_fn = mock_mcp.get_tool(tool_name)
+            manifest = getattr(tool_fn, "__manifest__", None)
+            assert manifest is not None, f"Tool '{tool_name}' missing __manifest__"
+            assert manifest["risk"] == "DESTRUCTIVE", (
+                f"Tool '{tool_name}' risk should be DESTRUCTIVE"
+            )
+            assert manifest["side_effects"] == "destructive"
+            assert manifest["idempotent"] is False
+            assert manifest["retryable"] is False
+            assert manifest["reversible"] is False
+            assert manifest["requires_confirmation"] is True
+            assert manifest["impact"] == "service_outage"
 
 
 class TestRestartInterface:

@@ -1,30 +1,39 @@
 """Observability: request IDs, per-tool counters, and audit support."""
 
+import contextvars
 import threading
 import time
 import uuid
 from collections import defaultdict
 from typing import Any
 
+from openwrt_mcp import __version__
+
 _request_counter: dict[str, int] = defaultdict(int)
 _counter_lock = threading.Lock()
-_current_request_id: str = ""
-_request_id_lock = threading.Lock()
+
+# [RULE: Observability-9] The request_id context MUST live in a
+# contextvars.ContextVar — never a module-level global. All tool handlers
+# are async; a global would be overwritten by concurrent invocations,
+# misattributing every subsequent log line.
+_request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+
+# Single source of truth for the tool-schema version: the package version.
+TOOLS_VERSION = __version__
 
 
 def set_request_id(request_id: str) -> None:
-    """Set the current request ID for logging context."""
-    global _current_request_id
-    with _request_id_lock:
-        _current_request_id = request_id
+    """Set the current request ID for logging context.
+
+    The value is isolated per asyncio task / thread via contextvars.
+    """
+    _request_id.set(request_id)
 
 
 def get_request_id() -> str:
     """Return the current request ID for log context."""
-    return _current_request_id
-
-
-TOOLS_VERSION = "1.2.0"
+    return _request_id.get()
 
 
 def generate_request_id() -> str:
@@ -60,11 +69,15 @@ def build_meta(
 
     Returns:
         Dict with request_id, duration_ms, tool_version, cached, retry_safe.
+
+    The request_id is read from the current context — NOT freshly generated —
+    so it matches the id written to this invocation's log lines
+    ([RULE: Observability-10]).
     """
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     record_invocation(tool_name)
     return {
-        "request_id": generate_request_id(),
+        "request_id": get_request_id(),
         "duration_ms": elapsed_ms,
         "tool_version": TOOLS_VERSION,
         "cached": cached,

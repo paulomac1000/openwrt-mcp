@@ -5,7 +5,12 @@ import logging
 import time
 from typing import Any
 
-from openwrt_mcp.observability import build_meta, generate_request_id, set_request_id
+from openwrt_mcp.observability import (
+    TOOLS_VERSION,
+    build_meta,
+    generate_request_id,
+    set_request_id,
+)
 from openwrt_mcp.tools.constants import SSH_TIMEOUT
 from openwrt_mcp.tools.explorer import get_explorer
 from openwrt_mcp.tools.response_helpers import (
@@ -17,7 +22,6 @@ from openwrt_mcp.tools.writer import check_write_enabled, get_writer
 from openwrt_mcp.validators import ValidationError
 
 logger = logging.getLogger("openwrt-mcp.tools")
-TOOLS_VERSION = "1.2.0"
 
 
 def _make_manifest(
@@ -67,6 +71,37 @@ def _make_write_manifest(
         "impact": "persistent",
         "privacy": "none",
         "reversible": True,
+    }
+
+
+def _make_destructive_manifest(
+    name: str,
+    timeout_ms: int = 30000,
+    latency: str = "slow",
+) -> dict[str, Any]:
+    """Create a DESTRUCTIVE tool manifest for irreversible operations.
+
+    [L3+] Reboot, factory reset, and delete operations are irreversible at
+    the application level. Their manifest MUST advertise idempotent=False,
+    retryable=False, reversible=False so an agent never re-issues them or
+    skips confirmation. See the Risk Consistency Matrix.
+    """
+    return {
+        "name": name,
+        "version": TOOLS_VERSION,
+        "risk": "DESTRUCTIVE",
+        "side_effects": "destructive",
+        "idempotent": False,
+        "retryable": False,
+        "concurrent_safe": False,
+        "timeout_ms": timeout_ms,
+        "requires_confirmation": True,
+        "determinism": "env-dependent",
+        "latency": latency,
+        "cost": "expensive",
+        "impact": "service_outage",
+        "privacy": "none",
+        "reversible": False,
     }
 
 
@@ -884,7 +919,7 @@ def register_openwrt_tools(mcp: Any) -> None:
         "reload_network": _make_write_manifest("reload_network", 20000, "moderate"),
         "uci_set": _make_write_manifest("uci_set", 15000, "moderate"),
         "uci_commit": _make_write_manifest("uci_commit", 15000, "moderate"),
-        "reboot_device": _make_write_manifest("reboot_device", 30000, "slow"),
+        "reboot_device": _make_destructive_manifest("reboot_device", 30000, "slow"),
         "ping_host": _make_manifest("ping_host", 10000, "fast"),
         "traceroute_host": _make_manifest("traceroute_host", 30000, "slow"),
         "nslookup_host": _make_manifest("nslookup_host", 10000, "fast"),
@@ -911,7 +946,7 @@ def register_openwrt_tools(mcp: Any) -> None:
                 fn.__manifest__ = tool_manifest_map[name]
         _inject_risk_prefixes(all_tools, tool_manifest_map)
     except Exception:
-        pass
+        logger.warning("Tool manifest injection failed for some tools", exc_info=True)
 
     tool_count = len(all_tools) if "all_tools" in dir() else 0
     if tool_count == 0:

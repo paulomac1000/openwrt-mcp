@@ -19,7 +19,7 @@ def _server_running():
         s = socket.create_connection(("127.0.0.1", REST_PORT), timeout=1)
         s.close()
         return True
-    except (TimeoutError, ConnectionRefusedError, OSError):
+    except TimeoutError, ConnectionRefusedError, OSError:
         return False
 
 
@@ -69,9 +69,12 @@ class TestToolsEndpoint:
         for tool in data["tools"]:
             desc = tool.get("description")
             assert desc is not None, f"Tool '{tool['name']}' has no description"
-            assert desc.startswith("[READ]") or desc.startswith("[WRITE]"), (
-                f"Tool '{tool['name']}' description missing risk prefix: {desc[:30]}"
+            is_ok = (
+                desc.startswith("[READ]")
+                or desc.startswith("[WRITE]")
+                or desc.startswith("[DESTRUCTIVE]")
             )
+            assert is_ok, f"Tool '{tool['name']}' description missing risk prefix: {desc[:30]}"
 
     def test_unknown_tool_returns_404(self):
         r = requests.post(

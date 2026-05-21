@@ -277,7 +277,7 @@ Write commands use a **separate validation path** (`execute_write()`
 in `SSHConnection`) that checks `ALLOWED_WRITE_PATTERNS`. The standard
 `execute()` path checks only `ALLOWED_PATTERNS` and **will reject**
 any write command (ifdown, uci set/commit, ubus call system reboot,
-/etc/init.d/network reload). This boundary ensures read-only tools
+init.d script reload). This boundary ensures read-only tools
 can never accidentally execute write operations, even if the tool
 code is modified.
 

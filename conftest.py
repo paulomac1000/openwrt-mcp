@@ -214,3 +214,25 @@ def openwrt_test_data():
             "summary": "all_passed - health check passed",
         },
     }
+
+
+@pytest.fixture
+def mock_mcp():
+    """Mock MCP instance that stores registered tools — Canonical Template 9."""
+    mcp = MagicMock()
+    mcp._tools = {}
+
+    def tool_decorator(*args, **kwargs):
+        def wrapper(func):
+            tool_name = kwargs.get("name", func.__name__)
+            mcp._tools[tool_name] = func
+            return func
+
+        if len(args) == 1 and callable(args[0]) and not kwargs:
+            mcp._tools[args[0].__name__] = args[0]
+            return args[0]
+        return wrapper
+
+    mcp.tool = tool_decorator
+    mcp.get_tool = lambda name: mcp._tools.get(name)
+    return mcp
