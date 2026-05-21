@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.2.1] — 2026-05-17
+## [1.2.1] — 2026-05-21
 
 ### Fixed — Standards Compliance (MCP Server Architect Standard v1.1.0)
 
@@ -46,6 +46,21 @@
 ### Metrics
 - 296 tests (215 unit + 53 integration + 10 smoke + 18 e2e)
 - 0 errors: ruff / mypy --strict / bandit -ll
+
+### Post-Review Fixes (2026-05-21)
+- **P0** `ci-cd-config.yaml`: fix `health_port` 9096 → 9094 (was REST API port)
+- **P0** `pyproject.toml`: `requires-python` 3.13 → 3.14, ruff/mypy target updated to py314
+- **P1** REST API `call_tool_endpoint`: set `request_id` context, apply sanitization, return `_meta`
+- **P1** `_error_response()` variants: sanitize error messages (was asymmetric with success path)
+- **P1** `server.py`: remove unused `_cache_lock` (declared but never acquired)
+- **P1** `registration.py`: log exception on manifest failure instead of bare `pass`
+- **P2** `Dockerfile`: non-root USER, audit log path `/app/log/` (was `/var/log/`)
+- **P2** `dependabot.yml`: re-add Docker ecosystem for base image updates
+- **P2** `constants.py`: `HEALTH_PORT` and `OPENWRT_KNOWN_HOSTS` env vars
+- **P2** `test_response_contract.py`: reuse `conftest.py` `mock_mcp` fixture
+- **P2** `.env.example`: remove `CODECOV_TOKEN` (CI-only), add `HEALTH_PORT`/`OPENWRT_KNOWN_HOSTS`
+- **P2** `afds_config.yaml`: document `docs/meta` exclusion
+- **P2** semgrep: 0 findings (307 rules, 111 files)
 
 ## [1.2.0] — 2026-05-12
 
