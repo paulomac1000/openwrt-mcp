@@ -6,7 +6,6 @@ arguments, then verifies the structural contract of the response.
 """
 
 import json
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,26 +13,14 @@ from openwrt_mcp.tools.registration import register_openwrt_tools
 
 
 @pytest.fixture
-def mcp_with_tools():
-    """Register all tools on a mock MCP and return it."""
-    mcp = MagicMock()
-    mcp._tools = {}
+def mcp_with_tools(mock_mcp):
+    """Register all tools on a mock MCP and return it.
 
-    def tool_decorator(*args, **kwargs):
-        def wrapper(func):
-            tool_name = kwargs.get("name", func.__name__)
-            mcp._tools[tool_name] = func
-            return func
-
-        if len(args) == 1 and callable(args[0]) and not kwargs:
-            mcp._tools[args[0].__name__] = args[0]
-            return args[0]
-        return wrapper
-
-    mcp.tool = tool_decorator
-    mcp.get_tool = lambda name: mcp._tools.get(name)
-    register_openwrt_tools(mcp)
-    return mcp
+    Reuses the project-level ``mock_mcp`` fixture from ``conftest.py``
+    (Canonical Template 9) and enriches it with registered tools.
+    """
+    register_openwrt_tools(mock_mcp)
+    return mock_mcp
 
 
 _REQUIRES_PARAMS = frozenset(

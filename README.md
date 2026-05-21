@@ -149,6 +149,7 @@ All configuration is via environment variables. See `.env.example` for a complet
 | `OPENWRT_USER` | `root` | SSH username |
 | `MCP_SSE_PORT` | `9095` | MCP SSE transport port |
 | `REST_API_PORT` | `9096` | REST API port |
+| `HEALTH_PORT` | `9094` | Health check port |
 | `SSH_TIMEOUT` | `30` | SSH connection timeout (seconds) |
 | `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED` | — | Set to `1` for Docker port forwarding |
 | `ENABLE_WRITE_OPERATIONS` | `false` | Set to `1` to enable write tools (uci_set, reboot, and others) |
@@ -156,6 +157,7 @@ All configuration is via environment variables. See `.env.example` for a complet
 | `ENABLE_AUDIT_LOGGING` | `true` | Log all executed commands |
 | `AUDIT_LOG_FILE` | `/var/log/openwrt_mcp.log` | Audit log path |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `OPENWRT_KNOWN_HOSTS` | — | Path to SSH known_hosts file for host key verification |
 
 ## Security Model
 
@@ -164,6 +166,7 @@ All configuration is via environment variables. See `.env.example` for a complet
 - **Write command whitelist** — Separate `execute_write()` path for write operations (`ifdown`, `ifup`, `uci set/commit`, `/etc/init.d/network`, `ubus reboot`)
 - **Blocked patterns** — `rm`, `reboot`, `wget`, `curl`, `uci set` (in read path), shell metacharacters (`;`, `|`, `&&`, `$`, and others)
 - **Key-based authentication** — Password login discouraged
+- **SSH host key verification** — Optional via `OPENWRT_KNOWN_HOSTS` (set to path of known_hosts file)
 - **Audit logging** — All commands logged with timestamps for accountability
 - **Localhost binding** — All ports bind to `127.0.0.1` by default; set `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1` for Docker
 

@@ -12,4 +12,4 @@ default_paths:
 excluded_dirs:
   - archived
   - archive
-  - docs/meta
+  - docs/meta  # meta files (doc-registry.md, glossary.md) are exempt from AFDS validation

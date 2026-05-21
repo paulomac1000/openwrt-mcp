@@ -12,6 +12,7 @@ from openwrt_mcp.tools.constants import (
     AUDIT_LOG_FILE,
     ENABLE_AUDIT_LOGGING,
     OPENWRT_HOST,
+    OPENWRT_KNOWN_HOSTS,
     OPENWRT_PASSWORD,
     OPENWRT_PORT,
     OPENWRT_SSH_KEY,
@@ -57,7 +58,7 @@ class SSHConnection:
                     "host": OPENWRT_HOST,
                     "port": OPENWRT_PORT,
                     "username": OPENWRT_USER,
-                    "known_hosts": None,
+                    "known_hosts": OPENWRT_KNOWN_HOSTS or None,
                     "connect_timeout": SSH_TIMEOUT,
                     "login_timeout": SSH_TIMEOUT,
                 }

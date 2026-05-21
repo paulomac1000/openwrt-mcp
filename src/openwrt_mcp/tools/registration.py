@@ -946,7 +946,7 @@ def register_openwrt_tools(mcp: Any) -> None:
                 fn.__manifest__ = tool_manifest_map[name]
         _inject_risk_prefixes(all_tools, tool_manifest_map)
     except Exception:
-        pass
+        logger.warning("Tool manifest injection failed for some tools", exc_info=True)
 
     tool_count = len(all_tools) if "all_tools" in dir() else 0
     if tool_count == 0:

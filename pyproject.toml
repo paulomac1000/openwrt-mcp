@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openwrt-mcp"
 version = "1.2.0"
-description = "Read-only MCP server for OpenWRT router management and diagnostics"
-requires-python = ">=3.13"
+description = "MCP server for OpenWRT router management, diagnostics, and write operations"
+requires-python = ">=3.14"
 dependencies = [
     "fastmcp>=3.3.1,<4.0.0",
     "asyncssh>=2.23.0,<3.0.0",
@@ -30,7 +30,7 @@ openwrt-mcp = "openwrt_mcp.server:main"
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP"]
@@ -40,7 +40,7 @@ known-first-party = ["openwrt_mcp"]
 
 [tool.mypy]
 strict = true
-python_version = "3.13"
+python_version = "3.14"
 
 [[tool.mypy.overrides]]
 module = "openwrt_mcp.tools.registration"
