@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from fastmcp import FastMCP
 
+from openwrt_mcp.observability import TOOLS_VERSION
 from openwrt_mcp.tools.registration import register_openwrt_tools
 from tests.integration.mcp_wrapper import MCPWrapper
 
@@ -221,7 +222,7 @@ class TestReadToolsResponseStructure:
         assert "request_id" in meta
         assert "duration_ms" in meta
         assert "tool_version" in meta
-        assert meta["tool_version"] == "1.2.0"
+        assert meta["tool_version"] == TOOLS_VERSION
 
     def test_get_dhcp_static_leases_has_leases(self, mcp_client):
         """Should return static DHCP reservations with MAC and IP."""

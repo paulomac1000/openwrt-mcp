@@ -3,6 +3,7 @@
 import time
 
 from openwrt_mcp.observability import (
+    TOOLS_VERSION,
     build_meta,
     generate_request_id,
     get_invocation_counts,
@@ -36,7 +37,7 @@ class TestObservability:
         assert "request_id" in meta
         assert "duration_ms" in meta
         assert isinstance(meta["duration_ms"], int)
-        assert meta["tool_version"] == "1.2.0"
+        assert meta["tool_version"] == TOOLS_VERSION
         assert "cached" in meta
         assert "retry_safe" in meta
 
