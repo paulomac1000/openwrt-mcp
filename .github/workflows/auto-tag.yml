@@ -5,6 +5,13 @@ on:
     branches: [main]
     types: [closed]
 
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   tag:
     if: github.event.pull_request.merged == true
@@ -13,7 +20,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 

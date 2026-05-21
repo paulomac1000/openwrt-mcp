@@ -13,10 +13,12 @@ ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "true").lower() in (
     "true",
     "yes",
 )
-AUDIT_LOG_FILE = os.getenv("AUDIT_LOG_FILE", "/var/log/openwrt_mcp.log")
+AUDIT_LOG_FILE = os.getenv("AUDIT_LOG_FILE", "/app/log/openwrt_mcp.log")
+OPENWRT_KNOWN_HOSTS = os.getenv("OPENWRT_KNOWN_HOSTS", "") or None
 
 MCP_SSE_PORT = int(os.getenv("MCP_SSE_PORT", "9095"))
 REST_API_PORT = int(os.getenv("REST_API_PORT", "9096"))
+HEALTH_PORT = int(os.getenv("HEALTH_PORT", "9094"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 ENABLE_WRITE_OPERATIONS = os.getenv("ENABLE_WRITE_OPERATIONS", "false").lower() in (
     "1",

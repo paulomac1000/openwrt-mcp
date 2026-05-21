@@ -105,10 +105,15 @@ class TestIntegrationManifests:
                     "reload_network",
                     "uci_set",
                     "uci_commit",
-                    "reboot_device",
                 }
             )
-            expected_risk = "WRITE" if name in WRITE_TOOLS else "READ"
+            DESTRUCTIVE_TOOLS = frozenset({"reboot_device"})
+            if name in DESTRUCTIVE_TOOLS:
+                expected_risk = "DESTRUCTIVE"
+            elif name in WRITE_TOOLS:
+                expected_risk = "WRITE"
+            else:
+                expected_risk = "READ"
             assert manifest["risk"] == expected_risk, (
                 f"Tool '{name}' manifest risk mismatch: {manifest['risk']} != {expected_risk}"
             )

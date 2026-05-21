@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/ci.yml)
 [![Docker](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/publish.yml/badge.svg)](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/publish.yml)
-[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue)](https://www.python.org/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Read-only MCP (Model Context Protocol) server for OpenWRT router management and diagnostics.
@@ -11,7 +11,7 @@ router without any write access.
 
 ## Requirements
 
-- Python 3.13+ (for local use) or Docker
+- Python 3.14+ (for local use) or Docker
 - OpenWRT router with SSH enabled (Dropbear or OpenSSH)
 - SSH key pair for authentication
 
@@ -64,7 +64,7 @@ docker build -t openwrt-mcp .
 # Then run with the same docker run command above
 ```
 
-### 4. Run locally (Python 3.13+)
+### 4. Run locally (Python 3.14+)
 
 ```bash
 pip install -e ".[dev]"
@@ -101,6 +101,7 @@ curl http://localhost:9096/api/tools/get_router_info/manifest
 
 Tools are categorized by risk level: **[READ]** tools are safe — they query the router with no side effects.
 **[WRITE]** tools can modify router state and require `ENABLE_WRITE_OPERATIONS=1` in `.env`.
+**[DESTRUCTIVE]** tools are irreversible (reboot) and require explicit confirmation.
 
 | Category | Tool | Risk | Description |
 |----------|------|------|-------------|
@@ -127,7 +128,7 @@ Tools are categorized by risk level: **[READ]** tools are safe — they query th
 | | `uci_commit` | WRITE | Commit UCI changes permanently |
 | | `restart_interface` | WRITE | Restart a network interface |
 | | `reload_network` | WRITE | Reload network services |
-| | `reboot_device` | WRITE | Reboot the router |
+| | `reboot_device` | DESTRUCTIVE | Reboot the router (irreversible) |
 
 ## Configuration
 
@@ -148,21 +149,24 @@ All configuration is via environment variables. See `.env.example` for a complet
 | `OPENWRT_USER` | `root` | SSH username |
 | `MCP_SSE_PORT` | `9095` | MCP SSE transport port |
 | `REST_API_PORT` | `9096` | REST API port |
+| `HEALTH_PORT` | `9094` | Health check port |
 | `SSH_TIMEOUT` | `30` | SSH connection timeout (seconds) |
 | `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED` | — | Set to `1` for Docker port forwarding |
-| `ENABLE_WRITE_OPERATIONS` | `false` | Set to `1` to enable write tools (uci_set, reboot, etc.) |
+| `ENABLE_WRITE_OPERATIONS` | `false` | Set to `1` to enable write tools (uci_set, reboot, and others) |
 | `OPENWRT_PASSWORD` | `None` | SSH password (not recommended — use SSH keys) |
 | `ENABLE_AUDIT_LOGGING` | `true` | Log all executed commands |
-| `AUDIT_LOG_FILE` | `/var/log/openwrt_mcp.log` | Audit log path |
+| `AUDIT_LOG_FILE` | `/app/log/openwrt_mcp.log` | Audit log path |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `OPENWRT_KNOWN_HOSTS` | — | Path to SSH known_hosts file for host key verification |
 
 ## Security Model
 
 - **Read-only by default** — All SSH commands are whitelisted; write operations (`uci set`, `ifdown`, `ubus reboot`) require `ENABLE_WRITE_OPERATIONS=1`
-- **Command whitelist** — Explicit read-only patterns (`ubus call`, `uci show`, `cat /proc/*`, `logread`, `ping`, etc.)
+- **Command whitelist** — Explicit read-only patterns (`ubus call`, `uci show`, `cat /proc/*`, `logread`, `ping`, and others)
 - **Write command whitelist** — Separate `execute_write()` path for write operations (`ifdown`, `ifup`, `uci set/commit`, `/etc/init.d/network`, `ubus reboot`)
-- **Blocked patterns** — `rm`, `reboot`, `wget`, `curl`, `uci set` (in read path), shell metacharacters (`;`, `|`, `&&`, `$`, etc.)
+- **Blocked patterns** — `rm`, `reboot`, `wget`, `curl`, `uci set` (in read path), shell metacharacters (`;`, `|`, `&&`, `$`, and others)
 - **Key-based authentication** — Password login discouraged
+- **SSH host key verification** — Optional via `OPENWRT_KNOWN_HOSTS` (set to path of known_hosts file)
 - **Audit logging** — All commands logged with timestamps for accountability
 - **Localhost binding** — All ports bind to `127.0.0.1` by default; set `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1` for Docker
 
@@ -173,15 +177,15 @@ This server follows two AI-First standards:
 | Standard | Document | Version | Description |
 |----------|----------|---------|-------------|
 | **AFDS** | [`docs_standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/afds-doc-writer/docs_standards.md) | v1.0 | Documentation structure, frontmatter schema, controlled language |
-| **MCP Core** | [`mcp_standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/mcp-server-architect/mcp_standards.md) | v1.1.0 | Tool design, response contracts, testing hierarchy, security |
+| **MCP Core** | [`mcp-server-standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/mcp-server-architect/mcp-server-standards.md) | v1.1.0 | Tool design, response contracts, testing hierarchy, security |
 
-Compliance level: **L2+** (all mandatory and recommended rules met). The MCP standard v1.1.0 features (Write Guard, `impact`/`privacy`/`reversible` manifest fields) were validated against this project's implementation. See `docs/openwrt-mcp.md` for the full reference.
+Compliance level: **L3-ready** (all L1-L3 rules met; Risk Consistency Matrix enforced by automated tests).
 
 ## Testing
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/unit/ tests/integration/ -q       # 253 tests (requires .env for integration)
+pytest tests/unit/ tests/integration/ -q       # 268 tests (requires .env for integration)
 pytest tests/unit/ --cov=openwrt_mcp -q         # 80%+ coverage
 ruff check . && ruff format --check .           # lint
 mypy src/openwrt_mcp/ --strict                  # type check
@@ -192,9 +196,9 @@ bandit -r src/openwrt_mcp/ -ll                  # security
 
 | Metric | Value |
 |--------|-------|
-| Python | 3.13+ (Docker: 3.14) |
-| Tools | 24 (19 READ + 5 WRITE) |
-| Tests | 253 (unit + integration); 279 total (with smoke + e2e) |
+| Python | 3.14+ (Docker: 3.14) |
+| Tools | 24 (19 READ + 4 WRITE + 1 DESTRUCTIVE) |
+| Tests | 296 (215 unit + 53 integration + 10 smoke + 18 e2e) |
 | Coverage | 86% |
 | Lint | 0 errors (ruff + mypy --strict + bandit) |
 | Docker | `ghcr.io/paulomac1000/openwrt-mcp:latest` |

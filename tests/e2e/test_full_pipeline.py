@@ -15,7 +15,7 @@ def _server_running():
         s = socket.create_connection(("127.0.0.1", REST_PORT), timeout=1)
         s.close()
         return True
-    except (TimeoutError, ConnectionRefusedError, OSError):
+    except TimeoutError, ConnectionRefusedError, OSError:
         return False
 
 

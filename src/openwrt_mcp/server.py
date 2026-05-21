@@ -22,25 +22,72 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from openwrt_mcp.tools.constants import LOG_LEVEL, MCP_SSE_PORT, OPENWRT_SSH_KEY, REST_API_PORT
+from openwrt_mcp import __version__
+from openwrt_mcp.observability import (
+    build_meta,
+    generate_request_id,
+    get_request_id,
+    set_request_id,
+)
+from openwrt_mcp.sanitizer import sanitize_log_line
+from openwrt_mcp.tools.constants import (
+    HEALTH_PORT,
+    LOG_LEVEL,
+    MCP_SSE_PORT,
+    OPENWRT_SSH_KEY,
+    REST_API_PORT,
+)
 from openwrt_mcp.tools.registration import register_openwrt_tools
 
 # =============================================================================
 # LOGGING CONFIGURATION
 # =============================================================================
 
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    stream=sys.stderr,
-)
+
+class RequestIdFilter(logging.Filter):
+    """Inject the current request_id into every log record (Template 4a)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = get_request_id()
+        return True
+
+
+class SanitizingFormatter(logging.Formatter):
+    """Redact credentials and IP addresses from every formatted log line."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return sanitize_log_line(super().format(record))
+
+
+def setup_logging() -> None:
+    """Configure stderr logging with request-id context and secret redaction.
+
+    Sanitization enforced at the logging infrastructure level cannot be
+    bypassed by a developer forgetting to call sanitize_log_line() manually.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        SanitizingFormatter("%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s")
+    )
+    handler.addFilter(RequestIdFilter())
+    root = logging.getLogger()
+    root.addHandler(handler)
+    root.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
+
+
+setup_logging()
 logger = logging.getLogger("openwrt-mcp")
 
 # =============================================================================
 # HEALTH CHECK SERVER (port 9094)
 # =============================================================================
 
-HEALTH_STATE = {"status": "starting", "last_heartbeat": time.time()}
+HEALTH_STATE: dict[str, Any] = {
+    "status": "starting",
+    "last_heartbeat": time.time(),
+    "tools": 0,
+    "tools_version": __version__,
+}
 _health_lock = threading.Lock()
 
 
@@ -114,7 +161,6 @@ register_openwrt_tools(mcp)
 # =============================================================================
 
 
-_cache_lock = threading.Lock()
 _tool_cache: dict[str, Any] = {}
 
 
@@ -195,7 +241,7 @@ def create_rest_app() -> Any:
             {
                 "status": "healthy",
                 "server": "OpenWRT-Observer",
-                "version": "1.2.0",
+                "version": __version__,
                 "tools_registered": get_tool_count(),
                 "tool_invocations": counts,
                 "total_invocations": sum(counts.values()),
@@ -226,7 +272,11 @@ def create_rest_app() -> Any:
         )
 
     async def call_tool_endpoint(request: Any) -> JSONResponse:
+        import time as _time
+
         tool_name = request.path_params.get("tool_name", "")
+        _start = _time.monotonic()
+        set_request_id(generate_request_id())
 
         try:
             body = await request.body()
@@ -262,17 +312,27 @@ def create_rest_app() -> Any:
                 )
 
             if inspect.iscoroutinefunction(fn):
-                result = await fn(**args)
+                raw_result = await fn(**args)
             else:
-                result = fn(**args)
+                raw_result = fn(**args)
 
-            if isinstance(result, str):
+            if isinstance(raw_result, str):
                 try:
-                    result = json.loads(result)
+                    parsed = json.loads(raw_result)
                 except json.JSONDecodeError:
-                    pass
+                    parsed = {"success": True, "data": sanitize_log_line(raw_result)}
+            else:
+                parsed = raw_result
 
-            return JSONResponse({"success": True, "tool": tool_name, "result": result})
+            meta = build_meta(tool_name, _start)
+            return JSONResponse(
+                {
+                    "success": True,
+                    "tool": tool_name,
+                    "result": parsed,
+                    "_meta": meta,
+                }
+            )
 
         except TypeError as e:
             return JSONResponse(
@@ -287,7 +347,7 @@ def create_rest_app() -> Any:
             return JSONResponse(
                 {
                     "success": False,
-                    "error": str(e),
+                    "error": sanitize_log_line(str(e)),
                     "error_type": type(e).__name__,
                     "tool": tool_name,
                 },
@@ -343,11 +403,12 @@ def main() -> None:
     """Main entry point for the OpenWRT MCP server."""
     from openwrt_mcp.tools.constants import OPENWRT_HOST, OPENWRT_PORT
 
-    # 1. Start health check server (port 9094)
-    start_health_server(port=9094)
+    # 1. Start health check server (port from HEALTH_PORT)
+    start_health_server(port=HEALTH_PORT)
     with _health_lock:
         HEALTH_STATE["status"] = "healthy"
         HEALTH_STATE["last_heartbeat"] = time.time()
+        HEALTH_STATE["tools"] = tool_count
 
     logger.info("OpenWRT-Observer MCP Server starting")
     logger.info("OpenWRT Host: %s:%s", OPENWRT_HOST, OPENWRT_PORT)
@@ -359,7 +420,7 @@ def main() -> None:
     rest_thread.start()
 
     logger.info("Endpoints:")
-    logger.info("  Health:      http://%s:9094/health", bind_host)
+    logger.info("  Health:      http://%s:%s/health", bind_host, HEALTH_PORT)
     logger.info("  MCP SSE:     http://%s:%s/sse", bind_host, MCP_SSE_PORT)
     logger.info("  MCP MSG:     http://%s:%s/messages", bind_host, MCP_SSE_PORT)
     logger.info("  REST API:    http://%s:%s/api/", bind_host, REST_API_PORT)
