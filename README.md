@@ -155,7 +155,7 @@ All configuration is via environment variables. See `.env.example` for a complet
 | `ENABLE_WRITE_OPERATIONS` | `false` | Set to `1` to enable write tools (uci_set, reboot, and others) |
 | `OPENWRT_PASSWORD` | `None` | SSH password (not recommended — use SSH keys) |
 | `ENABLE_AUDIT_LOGGING` | `true` | Log all executed commands |
-| `AUDIT_LOG_FILE` | `/var/log/openwrt_mcp.log` | Audit log path |
+| `AUDIT_LOG_FILE` | `/app/log/openwrt_mcp.log` | Audit log path |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `OPENWRT_KNOWN_HOSTS` | — | Path to SSH known_hosts file for host key verification |
 
