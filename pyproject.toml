@@ -8,19 +8,19 @@ version = "1.2.1"
 description = "MCP server for OpenWRT router management, diagnostics, and write operations"
 requires-python = ">=3.14"
 dependencies = [
-    "fastmcp>=3.3.1,<4.0.0",
+    "fastmcp>=3.4.2,<4.0.0",
     "asyncssh>=2.23.0,<3.0.0",
-    "starlette>=1.0.0",
-    "uvicorn>=0.47.0",
+    "starlette>=1.2.1",
+    "uvicorn>=0.49.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
+    "pytest-asyncio>=1.4.0",
     "pytest-mock>=3.15.1",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.13",
+    "ruff>=0.15.16",
     "mypy>=2.1.0",
     "bandit>=1.9.4",
 ]
