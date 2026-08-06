@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run every active capability against deterministic mock router data."""
-
 from __future__ import annotations
 
 import asyncio
@@ -39,11 +38,9 @@ _ARGUMENTS: dict[str, dict[str, Any]] = {
 async def main() -> int:
     os.environ["OPENWRT_MOCK_MODE"] = "1"
     os.environ["MCP_TRANSPORT"] = "stdio"
-    settings = load_settings(force=True)
-    app = build_application(settings, mcp_factory=SmokeMCP)
+    app = build_application(load_settings(force=True), mcp_factory=SmokeMCP)
     failures: list[str] = []
-    for manifest in app.kernel.registry.active():
-        name = str(manifest["name"])
+    for name in app.kernel.registry.active_names():
         result = await app.kernel.invoke(name, _ARGUMENTS.get(name, {}))
         if not result.success:
             failures.append(f"{name}: {result.as_dict()}")

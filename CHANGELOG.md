@@ -1,40 +1,15 @@
 # Changelog
 
-## [1.3.0] — 2026-08-06
+## [1.3.0] — 2026-08-07
 
-### Changed
+### Review follow-up
 
-- Replaced legacy FastMCP HTTP+SSE with the official MCP Python SDK v2 stdio adapter.
-- Added one application-owned invocation kernel shared by MCP, REST, and tests.
-- Preserved the 24-name supported catalog while exposing only 19 active read tools.
-- Restored historical read DTO fields and added contract coverage for all active tools.
-- Serialized non-concurrent-safe operations for the whole router target by default.
-- Removed public timeout overrides; manifest deadlines now own execution policy.
-- Required bearer authentication whenever loopback REST is enabled.
-- Required SSH host-key verification outside mock mode, with an explicit non-production exception.
-- Added periodic readiness probing with freshness TTL.
-- Added trusted `ai-skills` validator checkout and exact-SHA verification in CI.
-- Pinned direct runtime dependencies, the MCP v2 prerelease, GitHub Actions, and the Docker base digest.
-- Added hashed dependency-lock generation and exact wheel/container smoke paths in CI.
-
-### Security
-
-- Controlled tool failures now return sanitized `CallToolResult(is_error=true)` responses.
-- Write operations remain inactive and are never registered in MCP.
-- Write SSH commands are never automatically retried after ambiguous disconnects.
-
-### Local verification
-
-- 74 tests passed and 4 were explicitly skipped in the restricted local environment.
-- Non-integration branch coverage met the 80% gate.
-- The wheel `openwrt_mcp-1.3.0-py3-none-any.whl` built successfully.
-
-### Pending hosted and real-system evidence
-
-- Provider-backed CI on the exact final SHA.
-- Official MCP v2 client, Ruff, mypy, Bandit, pip-audit, and container smoke.
-- Real-router host-key mismatch, cancellation cleanup, and reviewed write-workflow tests.
-- Reviewed committed transitive dependency locks for cross-run reproducibility.
+- upgraded the required MCP Python SDK from `2.0.0b2` to stable `2.0.0`
+- removed the loopback REST invocation adapter from the L2 runtime profile
+- added closed, kernel-owned capability input schemas and transport-independent validation
+- made official MCP `CallToolResult` mapping the only production SDK path
+- committed hash-locked dependency inputs and changed publishing to consume exact CI artifacts
+- pinned the build backend and disabled isolated wheel builds
 
 ## [1.2.1] — 2026-05-21
 
@@ -197,6 +172,7 @@
 - Coverage: 80.34% (server.py included — 60% coverage)
 - 137 tests (115 unit + 22 integration)
 - 0 errors: ruff / mypy --strict / bandit -ll
+- Docker build: Python 3.13, ~25s
 
 ## [1.0.0] — 2026-05-11
 

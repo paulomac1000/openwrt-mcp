@@ -1,5 +1,3 @@
-# Direct runtime dependencies; exact transitive locks are generated and enforced in CI.
-mcp==2.0.0b2
+# Compatibility input only. Production and CI install requirements-runtime.lock.
+mcp==2.0.0
 asyncssh==2.24.0
-starlette==1.3.1
-uvicorn==0.51.0

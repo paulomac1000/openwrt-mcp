@@ -6,21 +6,31 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from mcp.types import CallToolResult, TextContent
+
 from openwrt_mcp import __version__
 from openwrt_mcp.application import (
     CapabilityManifest,
     CapabilityRegistry,
+    InputField,
+    InputSchema,
     InvocationKernel,
     KernelError,
-    ToolExecutionError,
 )
 from openwrt_mcp.settings import Settings
 
 _WRITE_INACTIVE_REASON = (
     "Write capabilities are retained in the supported catalog but disabled until "
-    "principal-bound, expiring approvals and authenticated Streamable HTTP are "
-    "implemented."
+    "principal-bound, expiring approvals and authenticated transport policy exist."
 )
+_NONE = InputSchema()
+_STR_REQUIRED = lambda max_length=253: InputField(  # noqa: E731
+    (str,), required=True, max_length=max_length
+)
+
+
+def _schema(**fields: InputField) -> InputSchema:
+    return InputSchema(fields)
 
 
 def _read_manifest(
@@ -29,7 +39,7 @@ def _read_manifest(
     confidentiality: str = "internal",
     timeout_ms: int = 15_000,
     cost: str = "cheap",
-    concurrent_safe: bool = False,
+    input_schema: InputSchema = _NONE,
 ) -> CapabilityManifest:
     return CapabilityManifest(
         name=name,
@@ -41,10 +51,11 @@ def _read_manifest(
         cost=cost,
         idempotent=True,
         retryable=True,
-        concurrent_safe=concurrent_safe,
+        concurrent_safe=False,
         timeout_ms=timeout_ms,
         requires_confirmation=False,
         reversible=True,
+        input_schema=input_schema,
     )
 
 
@@ -88,43 +99,91 @@ def build_manifest_registry() -> CapabilityRegistry:
             "get_router_firewall_rules", confidentiality="sensitive"
         ),
         "read_router_uci_config": _read_manifest(
-            "read_router_uci_config", confidentiality="sensitive"
+            "read_router_uci_config",
+            confidentiality="sensitive",
+            input_schema=_schema(config_name=_STR_REQUIRED(64)),
         ),
         "list_router_packages": _read_manifest("list_router_packages"),
         "get_router_logs": _read_manifest(
-            "get_router_logs", confidentiality="sensitive", timeout_ms=30_000
+            "get_router_logs",
+            confidentiality="sensitive",
+            timeout_ms=30_000,
+            input_schema=_schema(
+                lines=InputField((int,), default=50, minimum=10, maximum=200),
+                filter_level=InputField((str,), default="all", max_length=32),
+            ),
         ),
         "search_router_logs": _read_manifest(
-            "search_router_logs", confidentiality="sensitive", timeout_ms=30_000
+            "search_router_logs",
+            confidentiality="sensitive",
+            timeout_ms=30_000,
+            input_schema=_schema(
+                search_term=_STR_REQUIRED(128),
+                max_results=InputField(
+                    (int,), default=30, minimum=1, maximum=100
+                ),
+            ),
         ),
         "diagnose_router_connectivity": _read_manifest(
-            "diagnose_router_connectivity", timeout_ms=30_000, cost="moderate"
+            "diagnose_router_connectivity",
+            timeout_ms=30_000,
+            cost="moderate",
         ),
         "get_dhcp_static_leases": _read_manifest(
             "get_dhcp_static_leases", confidentiality="personal"
         ),
         "search_dhcp_logs": _read_manifest(
-            "search_dhcp_logs", confidentiality="personal", timeout_ms=30_000
+            "search_dhcp_logs",
+            confidentiality="personal",
+            timeout_ms=30_000,
+            input_schema=_schema(search_term=_STR_REQUIRED(128)),
         ),
         "get_device_dhcp_details": _read_manifest(
-            "get_device_dhcp_details", confidentiality="personal"
+            "get_device_dhcp_details",
+            confidentiality="personal",
+            input_schema=_schema(
+                mac_address=InputField((str, type(None)), default=None, max_length=32),
+                ip_address=InputField((str, type(None)), default=None, max_length=64),
+            ),
         ),
         "get_router_context": _read_manifest(
-            "get_router_context", confidentiality="sensitive", timeout_ms=30_000
+            "get_router_context",
+            confidentiality="sensitive",
+            timeout_ms=30_000,
         ),
         "describe_router_capabilities": _read_manifest(
             "describe_router_capabilities",
             confidentiality="public",
             timeout_ms=3_000,
-            concurrent_safe=True,
         ),
-        "ping_host": _read_manifest("ping_host", timeout_ms=10_000),
+        "ping_host": _read_manifest(
+            "ping_host",
+            timeout_ms=10_000,
+            input_schema=_schema(
+                host=_STR_REQUIRED(),
+                count=InputField((int,), default=4, minimum=1, maximum=5),
+            ),
+        ),
         "traceroute_host": _read_manifest(
-            "traceroute_host", timeout_ms=30_000
+            "traceroute_host",
+            timeout_ms=30_000,
+            input_schema=_schema(host=_STR_REQUIRED()),
         ),
-        "nslookup_host": _read_manifest("nslookup_host", timeout_ms=10_000),
+        "nslookup_host": _read_manifest(
+            "nslookup_host",
+            timeout_ms=10_000,
+            input_schema=_schema(
+                host=_STR_REQUIRED(),
+                dns_server=InputField((str,), default="8.8.8.8", max_length=253),
+            ),
+        ),
         "wifi_scan": _read_manifest(
-            "wifi_scan", confidentiality="personal", timeout_ms=20_000
+            "wifi_scan",
+            confidentiality="personal",
+            timeout_ms=20_000,
+            input_schema=_schema(
+                radio=InputField((str,), default="wlan0", max_length=32)
+            ),
         ),
         "restart_interface": _inactive_write_manifest("restart_interface"),
         "reload_network": _inactive_write_manifest("reload_network"),
@@ -137,77 +196,58 @@ def build_manifest_registry() -> CapabilityRegistry:
     return CapabilityRegistry(manifests)
 
 
-_OPERATION_SPECS: dict[
-    str, tuple[str, tuple[str, ...], dict[str, Any]]
-] = {
-    "test_router_connection": ("test_connection", (), {}),
-    "get_router_info": ("get_system_info", (), {}),
-    "get_router_wifi_status": ("get_wifi_status", (), {}),
-    "get_router_dhcp_leases": ("list_dhcp_leases", (), {}),
-    "get_router_firewall_rules": ("get_firewall_rules", (), {}),
-    "read_router_uci_config": ("read_uci_config", ("config_name",), {}),
-    "list_router_packages": ("list_installed_packages", (), {}),
-    "get_router_logs": (
-        "get_router_logs",
-        ("lines", "filter_level"),
-        {"lines": 50, "filter_level": "all"},
-    ),
+_OPERATION_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "test_router_connection": ("test_connection", ()),
+    "get_router_info": ("get_system_info", ()),
+    "get_router_wifi_status": ("get_wifi_status", ()),
+    "get_router_dhcp_leases": ("list_dhcp_leases", ()),
+    "get_router_firewall_rules": ("get_firewall_rules", ()),
+    "read_router_uci_config": ("read_uci_config", ("config_name",)),
+    "list_router_packages": ("list_installed_packages", ()),
+    "get_router_logs": ("get_router_logs", ("lines", "filter_level")),
     "search_router_logs": (
         "search_router_logs",
         ("search_term", "max_results"),
-        {"max_results": 30},
     ),
-    "diagnose_router_connectivity": (
-        "diagnose_router_connectivity",
-        (),
-        {},
-    ),
-    "get_dhcp_static_leases": ("get_dhcp_static_leases", (), {}),
-    "search_dhcp_logs": ("search_dhcp_logs", ("search_term",), {}),
+    "diagnose_router_connectivity": ("diagnose_router_connectivity", ()),
+    "get_dhcp_static_leases": ("get_dhcp_static_leases", ()),
+    "search_dhcp_logs": ("search_dhcp_logs", ("search_term",)),
     "get_device_dhcp_details": (
         "get_device_dhcp_details",
         ("mac_address", "ip_address"),
-        {"mac_address": None, "ip_address": None},
     ),
-    "get_router_context": ("get_router_context", (), {}),
-    "ping_host": ("ping_host", ("host", "count"), {"count": 4}),
-    "traceroute_host": ("traceroute_host", ("host",), {}),
-    "nslookup_host": (
-        "nslookup_host",
-        ("host", "dns_server"),
-        {"dns_server": "8.8.8.8"},
-    ),
-    "wifi_scan": ("wifi_scan", ("radio",), {"radio": "wlan0"}),
+    "get_router_context": ("get_router_context", ()),
+    "ping_host": ("ping_host", ("host", "count")),
+    "traceroute_host": ("traceroute_host", ("host",)),
+    "nslookup_host": ("nslookup_host", ("host", "dns_server")),
+    "wifi_scan": ("wifi_scan", ("radio",)),
 }
 
 
-def build_invocation_kernel(settings: Settings, explorer: Any) -> InvocationKernel:
+def build_invocation_kernel(
+    settings: Settings,
+    explorer: Any,
+) -> InvocationKernel:
     registry = build_manifest_registry()
 
     def make_operation(
         capability: str,
         method_name: str,
         parameter_names: tuple[str, ...],
-        defaults: dict[str, Any],
     ) -> Callable[..., Any]:
         async def operation(**arguments: Any) -> dict[str, Any]:
             method = getattr(explorer, method_name)
-            declared_seconds = max(
-                1, registry.get(capability).timeout_ms // 1_000
-            )
+            declared_seconds = max(1, registry.get(capability).timeout_ms // 1_000)
             command_timeout = min(settings.ssh_timeout, declared_seconds)
-            values = [
-                arguments[name] if name in arguments else defaults[name]
-                for name in parameter_names
-            ]
+            values = [arguments[name] for name in parameter_names]
             with explorer.ssh.timeout_scope(command_timeout):
                 return await method(*values)
 
         return operation
 
     operations = {
-        name: make_operation(name, method, parameters, defaults)
-        for name, (method, parameters, defaults) in _OPERATION_SPECS.items()
+        name: make_operation(name, method, parameters)
+        for name, (method, parameters) in _OPERATION_SPECS.items()
     }
 
     async def describe_router_capabilities() -> dict[str, Any]:
@@ -255,75 +295,68 @@ async def _invoke_for_mcp(
     kernel: InvocationKernel,
     name: str,
     arguments: dict[str, Any],
-) -> Any:
+) -> CallToolResult:
     result = await kernel.invoke(name, arguments)
     payload = result.as_dict()
-    try:
-        from mcp.types import CallToolResult, TextContent
-    except ModuleNotFoundError:
-        if result.success:
-            return payload
-        raise ToolExecutionError(
-            result.error
-            or KernelError(code="INTERNAL", message="Unknown tool failure")
-        )
-
     if result.success:
         return CallToolResult(
             content=[
                 TextContent(
-                    type="text", text=json.dumps(payload, sort_keys=True)
+                    type="text",
+                    text=json.dumps(payload, sort_keys=True),
                 )
             ],
             structured_content=payload,
         )
     error = result.error or KernelError(
-        code="INTERNAL", message="Unknown tool failure"
+        code="INTERNAL",
+        message="Unknown tool failure",
     )
     return CallToolResult(
-        content=[
-            TextContent(type="text", text=f"{error.code}: {error.message}")
-        ],
+        content=[TextContent(type="text", text=f"{error.code}: {error.message}")],
         is_error=True,
     )
 
 
 def register_openwrt_tools(mcp: Any, kernel: InvocationKernel) -> None:
-    """Register only active tools; every wrapper delegates to the kernel."""
+    """Register active tools; every wrapper delegates to the kernel."""
 
-    async def test_router_connection() -> Any:
+    async def test_router_connection() -> CallToolResult:
         """Test SSH connectivity to the configured router."""
         return await _invoke_for_mcp(kernel, "test_router_connection", {})
 
-    async def get_router_info() -> Any:
+    async def get_router_info() -> CallToolResult:
         """Fetch router system information."""
         return await _invoke_for_mcp(kernel, "get_router_info", {})
 
-    async def get_router_wifi_status() -> Any:
+    async def get_router_wifi_status() -> CallToolResult:
         """Fetch Wi-Fi interfaces and connected clients."""
         return await _invoke_for_mcp(kernel, "get_router_wifi_status", {})
 
-    async def get_router_dhcp_leases() -> Any:
+    async def get_router_dhcp_leases() -> CallToolResult:
         """Fetch active DHCP leases."""
         return await _invoke_for_mcp(kernel, "get_router_dhcp_leases", {})
 
-    async def get_router_firewall_rules() -> Any:
+    async def get_router_firewall_rules() -> CallToolResult:
         """Fetch bounded firewall rule output."""
         return await _invoke_for_mcp(kernel, "get_router_firewall_rules", {})
 
-    async def read_router_uci_config(config_name: str) -> Any:
+    async def read_router_uci_config(config_name: str) -> CallToolResult:
         """Read an allowlisted UCI configuration namespace."""
         return await _invoke_for_mcp(
-            kernel, "read_router_uci_config", {"config_name": config_name}
+            kernel,
+            "read_router_uci_config",
+            {"config_name": config_name},
         )
 
-    async def list_router_packages() -> Any:
+    async def list_router_packages() -> CallToolResult:
         """List a bounded sample of installed packages."""
         return await _invoke_for_mcp(kernel, "list_router_packages", {})
 
     async def get_router_logs(
-        lines: int = 50, filter_level: str = "all"
-    ) -> Any:
+        lines: int = 50,
+        filter_level: str = "all",
+    ) -> CallToolResult:
         """Fetch a bounded router log window."""
         return await _invoke_for_mcp(
             kernel,
@@ -332,8 +365,9 @@ def register_openwrt_tools(mcp: Any, kernel: InvocationKernel) -> None:
         )
 
     async def search_router_logs(
-        search_term: str, max_results: int = 30
-    ) -> Any:
+        search_term: str,
+        max_results: int = 30,
+    ) -> CallToolResult:
         """Search router logs using Python-side filtering."""
         return await _invoke_for_mcp(
             kernel,
@@ -341,26 +375,26 @@ def register_openwrt_tools(mcp: Any, kernel: InvocationKernel) -> None:
             {"search_term": search_term, "max_results": max_results},
         )
 
-    async def diagnose_router_connectivity() -> Any:
+    async def diagnose_router_connectivity() -> CallToolResult:
         """Run bounded connectivity diagnostics from the router."""
-        return await _invoke_for_mcp(
-            kernel, "diagnose_router_connectivity", {}
-        )
+        return await _invoke_for_mcp(kernel, "diagnose_router_connectivity", {})
 
-    async def get_dhcp_static_leases() -> Any:
+    async def get_dhcp_static_leases() -> CallToolResult:
         """Fetch static DHCP reservations."""
         return await _invoke_for_mcp(kernel, "get_dhcp_static_leases", {})
 
-    async def search_dhcp_logs(search_term: str) -> Any:
+    async def search_dhcp_logs(search_term: str) -> CallToolResult:
         """Search DHCP-related router events."""
         return await _invoke_for_mcp(
-            kernel, "search_dhcp_logs", {"search_term": search_term}
+            kernel,
+            "search_dhcp_logs",
+            {"search_term": search_term},
         )
 
     async def get_device_dhcp_details(
         mac_address: str | None = None,
         ip_address: str | None = None,
-    ) -> Any:
+    ) -> CallToolResult:
         """Fetch lease, reservation, and recent events for one device."""
         return await _invoke_for_mcp(
             kernel,
@@ -368,31 +402,30 @@ def register_openwrt_tools(mcp: Any, kernel: InvocationKernel) -> None:
             {"mac_address": mac_address, "ip_address": ip_address},
         )
 
-    async def get_router_context() -> Any:
+    async def get_router_context() -> CallToolResult:
         """Fetch an aggregate router context snapshot."""
         return await _invoke_for_mcp(kernel, "get_router_context", {})
 
-    async def describe_router_capabilities() -> Any:
+    async def describe_router_capabilities() -> CallToolResult:
         """Describe supported and active catalogs without router I/O."""
-        return await _invoke_for_mcp(
-            kernel, "describe_router_capabilities", {}
-        )
+        return await _invoke_for_mcp(kernel, "describe_router_capabilities", {})
 
-    async def ping_host(host: str, count: int = 4) -> Any:
+    async def ping_host(host: str, count: int = 4) -> CallToolResult:
         """Ping a validated host from the router."""
         return await _invoke_for_mcp(
-            kernel, "ping_host", {"host": host, "count": count}
+            kernel,
+            "ping_host",
+            {"host": host, "count": count},
         )
 
-    async def traceroute_host(host: str) -> Any:
+    async def traceroute_host(host: str) -> CallToolResult:
         """Trace a validated host from the router."""
-        return await _invoke_for_mcp(
-            kernel, "traceroute_host", {"host": host}
-        )
+        return await _invoke_for_mcp(kernel, "traceroute_host", {"host": host})
 
     async def nslookup_host(
-        host: str, dns_server: str = "8.8.8.8"
-    ) -> Any:
+        host: str,
+        dns_server: str = "8.8.8.8",
+    ) -> CallToolResult:
         """Resolve a host through a validated DNS server."""
         return await _invoke_for_mcp(
             kernel,
@@ -400,11 +433,9 @@ def register_openwrt_tools(mcp: Any, kernel: InvocationKernel) -> None:
             {"host": host, "dns_server": dns_server},
         )
 
-    async def wifi_scan(radio: str = "wlan0") -> Any:
+    async def wifi_scan(radio: str = "wlan0") -> CallToolResult:
         """Scan nearby Wi-Fi networks through an allowlisted interface."""
-        return await _invoke_for_mcp(
-            kernel, "wifi_scan", {"radio": radio}
-        )
+        return await _invoke_for_mcp(kernel, "wifi_scan", {"radio": radio})
 
     functions = [
         test_router_connection,

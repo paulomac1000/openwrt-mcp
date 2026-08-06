@@ -1,72 +1,29 @@
 schema_version: 1
-assessment_id: openwrt-mcp-ai-skills-1.2.0
-source:
-  repository: paulomac1000/openwrt-mcp
-  base_revision: c2ccb57e9ac18b38843c34790062648eda7e4c7c
-target:
-  branch: agent/ai-skills-compliance-refactor
-  maturity: L2-candidate
-standards:
-  repository: paulomac1000/ai-skills
-  revision: 661ff01a5e70d58d6c94a12545b24647e52063ed
-  skill_version: 1.2.0
-profiles:
-  - python
-  - mcp-server
-  - router
+project: openwrt-mcp
+profile: l2-read-only-stdio
+assessed_revision: pending-final-sha
+standards_revision: 661ff01a5e70d58d6c94a12545b24647e52063ed
+status: draft
 implemented:
-  - typed immutable settings before composition
-  - one invocation kernel for MCP and REST
-  - target-wide serialization for non-concurrent-safe operations
-  - server-owned manifest deadlines with no public timeout override
-  - 24-name supported catalog and 19 active read tools
-  - historical read DTO contract regression tests
-  - protocol-native model-visible tool errors
-  - mandatory host-key verification in real mode
-  - fail-closed bearer authentication for optional loopback REST
-  - periodic readiness with freshness TTL
-  - trusted ai-skills validators checked out outside the candidate tree
-  - exact direct dependency pins, hashed CI locks, exact-wheel and container smoke
-intentionally_inactive:
-  - restart_interface
-  - reload_network
-  - uci_set
-  - uci_commit
-  - reboot_device
-local_evidence:
-  environment: isolated .venv with restricted package index
-  tests: 74 passed, 4 skipped
-  branch_coverage: 80 percent
-  wheel: openwrt_mcp-1.3.0-py3-none-any.whl
-hosted_evidence_required:
-  - exact final SHA checkout verification
-  - trusted AFDS and workflow-policy validation
-  - Ruff and format
-  - mypy strict
-  - Bandit and pip-audit
-  - official MCP v2 client success, tool error, timeout, and cancellation
-  - exact wheel smoke
-  - exact container smoke
-real_system_todos:
-  - id: TODO-REAL-SSH-IDENTITY
-    owner: agent-with-isolated-openwrt-lab
-    test: Verify a mismatched enrolled host key fails before any command.
-  - id: TODO-REAL-CANCELLATION
-    owner: agent-with-isolated-openwrt-lab
-    test: Cancel a controlled slow read and prove bounded command, lock, and connection cleanup.
-  - id: TODO-REAL-WRITE-WORKFLOW
-    owner: agent-with-isolated-openwrt-lab
-    test: After reviewed approval and authorization exist, verify plan, execute, validate, and compensate without automatic retry.
-residual_risks:
-  - MCP Python SDK v2 is pinned to a prerelease and may change on upgrade.
-  - Generated transitive hash locks are CI evidence but are not yet committed for cross-run reproducibility.
-  - No real-router test was executed in the restricted environment.
-  - Remote Streamable HTTP and write activation are intentionally absent.
-independent_decision:
-  status: pending
-  required_evidence:
-    - provider-backed CI on the exact final SHA
-    - review of generated dependency locks
-    - review of every remaining waiver and real-system TODO
-rollback:
-  strategy: Reset the branch to the previous reviewed SHA; active tools perform no router state migration.
+  - stable MCP Python SDK 2.0.0
+  - stdio-only invocation profile
+  - closed kernel-owned input schemas
+  - target-wide serialization and manifest-owned deadlines
+  - verified SSH host identity outside mock mode
+  - inactive and unregistered write capabilities
+  - reviewed hash lockfiles and no-isolation wheel build
+  - publish from exact successful CI artifacts
+pending_evidence:
+  - id: provider-ci
+    owner: openwrt-mcp-maintainers
+    requirement: Full CI must pass on the exact final PR SHA.
+  - id: real-router-host-key-mismatch
+    owner: openwrt-mcp-maintainers
+    requirement: Verify fail-closed behavior against an isolated router with a deliberately changed host key.
+  - id: real-router-cancellation
+    owner: openwrt-mcp-maintainers
+    requirement: Cancel an in-flight read and prove cleanup and subsequent invocation health on an isolated router.
+  - id: independent-l2-approval
+    owner: independent-reviewer
+    requirement: Record an independent adoption decision after exact-SHA evidence is complete.
+waivers: []

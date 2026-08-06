@@ -1,103 +1,81 @@
 # OpenWRT MCP
 
-Hardened read-only MCP server for bounded OpenWRT diagnostics.
+Hardened read-only MCP server for observing one OpenWRT router over SSH.
 
-## Current profile
+## Supported runtime profile
 
-- Official MCP Python SDK v2 over stdio.
-- 24 stable names in the supported catalog.
-- 19 active read-only tools exposed through `tools/list`.
-- Five write or destructive capabilities retained as inactive metadata and not registered.
-- One invocation kernel shared by MCP, optional REST, and tests.
-- Target-wide serialization for operations marked `concurrent_safe=false`.
+- Official MCP Python SDK `2.0.0`
+- MCP stdio transport only
+- 19 active read capabilities
+- 5 historical write/destructive capability names retained as inactive metadata
+- Loopback-only HTTP liveness/readiness endpoint on port 9094
+- Verified SSH host identity required outside mock mode
 
-## Requirements
+REST and legacy HTTP+SSE are intentionally not part of this profile. This avoids sharing `asyncio` locks and an AsyncSSH connection between independent event loops or threads.
 
-- Python 3.12–3.14.
-- An OpenWRT router reachable over SSH.
-- An SSH key or password.
-- An enrolled `known_hosts` file in real mode.
-
-Copy `.env.example` and set at least:
-
-```env
-OPENWRT_HOST=192.168.1.1
-OPENWRT_USER=root
-OPENWRT_SSH_KEY=/absolute/path/to/openwrt_id_ed25519
-OPENWRT_KNOWN_HOSTS=/absolute/path/to/known_hosts
-MCP_TRANSPORT=stdio
-```
-
-Generate the host identity file before first use:
+## Configure the router
 
 ```bash
-ssh-keyscan -H 192.168.1.1 > known_hosts
+ssh-keygen -t ed25519 -f keys/openwrt_id_ed25519 -C openwrt-mcp
+ssh-copy-id -i keys/openwrt_id_ed25519.pub root@192.168.1.1
+ssh-keyscan -H 192.168.1.1 > keys/known_hosts
+cp .env.example .env
 ```
 
-`OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK=1` is an explicit non-production exception. It emits a warning and is never accepted for dormant write execution.
+Set at least `OPENWRT_HOST`, `OPENWRT_SSH_KEY`, and `OPENWRT_KNOWN_HOSTS`.
 
 ## Local development
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -e ".[dev]"
-OPENWRT_MOCK_MODE=1 python scripts/mock_smoke.py
-python -m pytest
+python3 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
+.venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+.venv/bin/python scripts/ci.py
 ```
 
-Start the MCP server:
+For deterministic development without a router:
 
 ```bash
+OPENWRT_MOCK_MODE=1 .venv/bin/python scripts/mock_smoke.py
+```
+
+## Run
+
+The server communicates over stdin/stdout. Diagnostics are written to stderr.
+
+```bash
+OPENWRT_HOST=192.168.1.1 \
+OPENWRT_SSH_KEY=$PWD/keys/openwrt_id_ed25519 \
+OPENWRT_KNOWN_HOSTS=$PWD/keys/known_hosts \
 openwrt-mcp
 ```
 
-The hardened MCP transport is stdio. Legacy HTTP plus SSE has been removed.
+The optional health listener binds to `127.0.0.1:9094`:
 
-## Optional REST adapter
-
-REST is disabled by default, binds only to `127.0.0.1`, and uses the same invocation kernel as MCP. A bearer token is mandatory whenever REST is enabled:
-
-```env
-ENABLE_REST_API=true
-MCP_REST_AUTH_TOKEN=replace-with-a-long-random-token
+```bash
+curl http://127.0.0.1:9094/live
+curl http://127.0.0.1:9094/ready
 ```
 
-Requests without a valid `Authorization: Bearer ...` header are rejected. Request bodies have a configured byte limit, invalid JSON is rejected, and wildcard origins are not accepted.
+## Docker
 
-## Deadlines and concurrency
+CI builds the wheel first and builds the image only from that wheel plus the reviewed, hashed runtime lockfile.
 
-Public MCP tools do not accept a timeout override. Each capability manifest owns its deadline. The internal SSH command timeout is capped by that deadline. Non-concurrent-safe operations are serialized for the whole configured router target unless an explicit reviewed concurrency group is declared.
+```bash
+python -m build --wheel --no-isolation
+docker build -t openwrt-mcp:local .
+```
 
-## Response compatibility
+Run the container under an MCP host that attaches to its stdio. Mount the private key and known-hosts file read-only.
 
-The active tools preserve historical read DTOs, including connectivity summaries, router-context aggregate fields, `reachable` on ping, `resolved` on DNS lookup, parsed Wi-Fi scan networks, and stable DHCP event values.
+## Capability and input policy
 
-Controlled tool failures return sanitized `CallToolResult` content with `is_error=true`. Unexpected SDK or protocol failures remain protocol-level errors.
+Every capability has a closed input schema owned by the invocation kernel. The kernel rejects missing fields, unknown fields, invalid types, and out-of-range values before acquiring the target lock or performing SSH I/O. The public MCP wrapper exposes the same field names and defaults. Deadlines are server-owned and are not public tool parameters.
 
-## CI and standards evidence
+All non-concurrent-safe operations are serialized for the complete router target unless a narrower concurrency group is explicitly reviewed.
 
-`standards-lock.yaml` pins `paulomac1000/ai-skills` to revision `661ff01a5e70d58d6c94a12545b24647e52063ed`.
+## Release evidence
 
-Hosted CI:
+The publish workflow does not rebuild dependencies or select an arbitrary ref. It consumes the wheel and lockfiles produced by a successful CI run for the exact `main` SHA, verifies the wheel hash, smoke-tests the image, and publishes that image digest.
 
-1. checks out the exact candidate SHA;
-2. checks out the trusted `ai-skills` revision outside the candidate tree;
-3. runs the trusted AFDS and workflow-policy validators;
-4. generates hashed runtime and development locks;
-5. runs Ruff, formatting, mypy strict, Bandit, pip-audit, tests, and branch coverage;
-6. builds and smokes the exact wheel through the official MCP client;
-7. builds and smokes a container from the tested wheel and runtime lock.
-
-The generated transitive lock files are retained as CI evidence. Committing reviewed generated locks remains follow-up work for cross-run reproducibility.
-
-## Documentation
-
-- `AGENTS.md` — repository operating instructions.
-- `docs/openwrt-mcp.md` — architecture and operational contract.
-- `docs/migration-assessment.yaml` — evidence, residual risks, and real-system TODOs.
-- `standards-lock.yaml` — immutable standards source.
-
-## Safety boundary
-
-The project is currently read-only. Do not activate write tools until authenticated authorization, principal-bound expiring approval, verification, compensation, and isolated-router tests are implemented and reviewed.
+See `docs/openwrt-mcp.md` and `docs/migration-assessment.yaml` for architecture and remaining real-router evidence.

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import sys
-import types
 from typing import Any
 
 import pytest
+from mcp.types import CallToolResult
 
-from openwrt_mcp.application import CapabilityManifest, CapabilityRegistry, InvocationKernel
+from openwrt_mcp.application import (
+    CapabilityManifest,
+    CapabilityRegistry,
+    InvocationKernel,
+)
 from openwrt_mcp.tools.registration import _invoke_for_mcp
 
 
@@ -29,34 +32,7 @@ def manifest(name: str) -> CapabilityManifest:
 
 
 @pytest.mark.asyncio
-async def test_mcp_mapping_returns_structured_success_and_tool_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class TextContent:
-        def __init__(self, *, type: str, text: str) -> None:
-            self.type = type
-            self.text = text
-
-    class CallToolResult:
-        def __init__(
-            self,
-            *,
-            content: list[Any],
-            structured_content: dict[str, Any] | None = None,
-            is_error: bool = False,
-        ) -> None:
-            self.content = content
-            self.structured_content = structured_content
-            self.is_error = is_error
-
-    package = types.ModuleType("mcp")
-    module = types.ModuleType("mcp.types")
-    module.CallToolResult = CallToolResult  # type: ignore[attr-defined]
-    module.TextContent = TextContent  # type: ignore[attr-defined]
-    package.types = module  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "mcp", package)
-    monkeypatch.setitem(sys.modules, "mcp.types", module)
-
+async def test_mcp_mapping_returns_structured_success_and_tool_error() -> None:
     async def good() -> dict[str, Any]:
         return {"success": True, "value": 1}
 
@@ -65,7 +41,7 @@ async def test_mcp_mapping_returns_structured_success_and_tool_error(
             "success": False,
             "error": {
                 "code": "UPSTREAM_FAILURE",
-                "message": "safe failure",
+                "message": "password=router-secret",
             },
         }
 
@@ -78,39 +54,13 @@ async def test_mcp_mapping_returns_structured_success_and_tool_error(
     )
     success = await _invoke_for_mcp(kernel, "good", {})
     failure = await _invoke_for_mcp(kernel, "bad", {})
+
+    assert isinstance(success, CallToolResult)
     assert success.is_error is False
+    assert success.structured_content is not None
     assert success.structured_content["success"] is True
+    assert isinstance(failure, CallToolResult)
     assert failure.is_error is True
-    assert failure.structured_content is None
-    assert "safe failure" in failure.content[0].text
-
-
-@pytest.mark.asyncio
-async def test_mcp_mapping_has_offline_fallback_without_sdk(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from openwrt_mcp.application import ToolExecutionError
-
-    monkeypatch.delitem(sys.modules, "mcp", raising=False)
-    monkeypatch.delitem(sys.modules, "mcp.types", raising=False)
-
-    async def good() -> dict[str, Any]:
-        return {"success": True, "value": 1}
-
-    async def bad() -> dict[str, Any]:
-        return {
-            "success": False,
-            "error": {"code": "UPSTREAM_FAILURE", "message": "safe"},
-        }
-
-    kernel = InvocationKernel(
-        registry=CapabilityRegistry(
-            {"good": manifest("good"), "bad": manifest("bad")}
-        ),
-        operations={"good": good, "bad": bad},
-        target_identity="router",
-    )
-    success = await _invoke_for_mcp(kernel, "good", {})
-    assert success["success"] is True
-    with pytest.raises(ToolExecutionError, match="UPSTREAM_FAILURE"):
-        await _invoke_for_mcp(kernel, "bad", {})
+    rendered = "\n".join(str(block.text) for block in failure.content)
+    assert "router-secret" not in rendered
+    assert "<REDACTED>" in rendered

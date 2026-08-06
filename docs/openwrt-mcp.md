@@ -1,78 +1,68 @@
 ---
-doc_id: openwrt-mcp-architecture
-title: OpenWRT MCP hardened read-only profile
-doc_type: architecture
-status: draft
+description: Defines the OpenWRT MCP runtime architecture, capability policy, input validation, dependency ownership, and release evidence.
+doc_id: system.openwrt-mcp
+type: system
+status: evolving
+rigor: operational
 owners:
   - openwrt-mcp-maintainers
-last_reviewed: 2026-08-06
-applies_to:
-  - openwrt-mcp 1.3.x
-summary: Architecture, public contracts, security controls, operation, and verification for the hardened OpenWRT MCP server.
-revision_history:
-  - date: 2026-08-06
-    change: Restored read-tool DTO compatibility, target-wide serialization, fail-closed REST and SSH identity, trusted CI validation, and protocol-native tool errors.
-verification:
-  - python scripts/ci.py
-  - python -m coverage run --branch -m pytest -m "not integration"
-  - python -m coverage report --fail-under=80
-  - hosted GitHub Actions on the exact candidate SHA
+verification: Run .venv/bin/python scripts/ci.py and inspect the exact-SHA GitHub Actions evidence artifact.
+review_triggers:
+  - MCP SDK or transport changes
+  - capability schema changes
+  - SSH lifecycle or host identity changes
+  - write capability activation
+  - dependency lock or release workflow changes
 ---
+# OpenWRT MCP system
 
-# OpenWRT MCP hardened read-only profile
+## Operational answer
 
-## Purpose
+The supported L2 profile exposes 19 read-only capabilities over MCP stdio. Five historical write or destructive names remain in the supported catalog but are inactive and are never registered with the SDK. A loopback HTTP listener exposes only `/live`, `/health`, and `/ready`.
 
-OpenWRT MCP exposes bounded diagnostic operations for one explicitly configured OpenWRT router. The supported catalog keeps 24 stable names, while only 19 read-only capabilities are active and visible through `tools/list`. Five historical write or destructive capabilities remain inactive until principal-bound authorization, expiring approval, verification, and compensation are implemented.
+## Event-loop ownership
 
-## Architecture
+One application instance owns one invocation kernel, one target lock group, one explorer, and one AsyncSSH connection. All MCP calls execute on the MCP server's event loop. No REST adapter or second invocation loop shares those objects.
 
-`Settings.from_env()` validates configuration before application construction. `build_application()` creates the explorer, capability registry, invocation kernel, and official MCP SDK v2 adapter without performing network I/O.
+Readiness probes run in a separate thread only because every probe creates and closes a separate explorer and SSH client owned by that probe's private event loop. Health state crosses the thread boundary through a `threading.Lock`; asyncio primitives and SSH connections do not.
 
-Every MCP and REST call enters the same `InvocationKernel`. The kernel resolves the manifest, applies one server-owned deadline, serializes non-concurrent-safe work for the whole SSH target by default, invokes the operation, sanitizes output, and returns one governed result. A narrower concurrency group must be explicit and reviewed.
+## Input contract
 
-The MCP transport is stdio. Legacy HTTP plus SSE is removed. The optional REST adapter is loopback-only and delegates to the same kernel.
+Each capability manifest contains a closed `InputSchema`. The kernel validates every invocation before I/O:
 
-## Public contracts
+- the input must be an object,
+- required fields must exist,
+- unknown fields are rejected,
+- booleans are not accepted as integers,
+- types, lengths, and numeric ranges are enforced,
+- defaults are applied once by the kernel.
 
-The active tools preserve the established read-side DTOs. Contract tests cover all 19 active names and specifically preserve:
+The MCP wrappers expose the same names and defaults. Domain validators still apply host, address, UCI, radio, and search-term grammar before command construction.
 
-- four connectivity checks and `excellent`, `good`, or `poor` health;
-- router-context schema, kernel, CPU load, Wi-Fi summaries, DHCP counts, and subsection status;
-- `reachable` on ping and `resolved` on DNS lookup;
-- parsed Wi-Fi scan networks;
-- DHCP event values such as `ack`, `request`, `offer`, and `discover`.
+## Deadlines and concurrency
 
-Public MCP schemas do not expose `timeout_seconds`. Deadlines are policy owned and come from capability manifests; the SSH command timeout is capped by the manifest deadline.
+Tool callers cannot override timeouts. Each manifest owns a deadline that includes waiting for the target lock. Non-concurrent-safe capabilities use a whole-target lock by default, preventing two tools from concurrently using the same router connection. Cancellation is re-raised and releases the lock.
 
-Successful MCP calls return a full `CallToolResult` with structured content. A controlled tool failure returns sanitized model-visible content with `is_error=true`. Unexpected protocol or SDK failures remain protocol-level errors.
+## MCP result mapping
 
-## Security controls
+The official MCP SDK is a required runtime dependency. The adapter has no production fallback for a missing SDK. Successful calls return `CallToolResult` with structured content. Controlled tool failures return sanitized `CallToolResult(is_error=true)` results rather than protocol errors.
 
-Outside deterministic mock mode, `OPENWRT_KNOWN_HOSTS` is mandatory. `OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK=1` is an explicit non-production exception that emits a warning. Dormant write execution never permits this exception and requires an enrolled host key.
+## SSH identity and write state
 
-REST cannot start without `MCP_REST_AUTH_TOKEN`. Bearer tokens are compared with `secrets.compare_digest()`. Request bodies have a configured byte limit, invalid JSON is rejected, origins cannot use a wildcard, and the listener binds to `127.0.0.1`.
+Outside deterministic mock mode, `OPENWRT_KNOWN_HOSTS` is required. The explicit insecure escape hatch is development-only and emits a warning. Dormant write-domain code also refuses write execution without host-key verification and never retries an ambiguous write after connection loss.
 
-SSH read commands use a fixed allowlist and validated parameters. UCI writes use validated identifiers and shell quoting. Write commands are never automatically retried after an ambiguous disconnect.
+## Dependency and artifact policy
 
-## Readiness and lifecycle
+`requirements-runtime.lock` and `requirements-dev.lock` are reviewed, committed pip-compile outputs with hashes. CI regenerates candidate locks and fails when they differ from the committed files. The build backend is pinned and the wheel is built with `--no-isolation` from the locked environment.
 
-The application-owned SSH client is created and closed inside the MCP lifecycle. Readiness uses a separate short-lived real-mode client so loop-affine resources are not shared across event loops. The dependency state has a freshness timestamp and TTL, and a bounded periodic probe refreshes it. `/live` reports process liveness; `/ready` fails when dependency evidence is absent, unhealthy, or stale.
-
-## Dependencies and artifacts
-
-Direct runtime dependencies and the MCP v2 prerelease are pinned exactly. The container base image is pinned by digest. Hosted CI generates transitive runtime and development lock files with hashes, installs with `--require-hashes`, tests the exact wheel, and builds the container from that tested wheel and runtime lock. The generated locks are retained as CI evidence; committing reviewed generated locks remains follow-up work for cross-run reproducibility.
+CI tests the exact wheel and builds the container from that wheel plus the reviewed runtime lock. Publishing consumes the provider-backed CI artifact for the exact successful `main` SHA; it does not resolve dependencies again.
 
 ## Verification
 
-Local verification runs in an isolated `.venv` with deterministic mock data. Hosted CI additionally checks out `paulomac1000/ai-skills` at revision `661ff01a5e70d58d6c94a12545b24647e52063ed` outside the candidate tree and runs its AFDS and GitHub Actions policy validators against this repository.
+Local deterministic verification:
 
-Hosted evidence must include Ruff, format, mypy strict, Bandit, pip-audit, branch coverage, official MCP client success and error tests, exact-wheel smoke, and exact-container smoke on the final SHA.
+```bash
+.venv/bin/python scripts/ci.py
+```
 
-## Known limits
-
-The MCP Python SDK v2 dependency is pinned to a prerelease and must not be upgraded without rerunning the official-client matrix. Real-router host-key mismatch, cancellation cleanup, and any future write workflow require an isolated OpenWRT laboratory. Remote Streamable HTTP and write activation remain out of scope.
-
-## Rollback
-
-Reset the feature branch to its previous reviewed SHA. The migration performs no router-side state change because all active capabilities are read-only.
+Provider-backed verification additionally runs the stable MCP 2.0.0 official client, Ruff, mypy strict, Bandit, pip-audit, exact-wheel smoke, and exact-container smoke. Real-router host-key mismatch and cancellation cleanup require the isolated laboratory described in `docs/migration-assessment.yaml`.

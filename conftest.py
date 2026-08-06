@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
+
+if importlib.util.find_spec("mcp") is None:
+    sys.path.insert(0, str(Path(__file__).parent / "tests" / "fakes"))
 
 from openwrt_mcp.settings import Settings, reset_settings_for_tests
 
@@ -29,14 +34,9 @@ def settings(tmp_path: Path) -> Settings:
         openwrt_known_hosts=known_hosts,
         ssh_timeout=30,
         health_port=19094,
-        rest_api_port=19096,
-        enable_rest_api=False,
         log_level="INFO",
         enable_audit_logging=True,
         audit_log_file=tmp_path / "audit.log",
-        rest_auth_token=None,
-        max_request_body_bytes=1024,
-        allowed_origins=(),
         mcp_transport="stdio",
         mock_mode=False,
     )

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Candidate-tree workflow policy diagnostics; not independent approval."""
-
 from __future__ import annotations
 
 import re
@@ -14,17 +13,18 @@ FULL_SHA = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 def main() -> int:
     findings: list[str] = []
     for path in sorted(Path(".github/workflows").glob("*.yml")):
-        text = path.read_text(encoding="utf-8")
-        data = yaml.safe_load(text)
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             findings.append(f"{path}: workflow must be a mapping")
             continue
-        permissions = data.get("permissions")
-        if permissions not in ({"contents": "read"}, "read-all"):
+        if data.get("permissions") not in ({"contents": "read"}, "read-all"):
             findings.append(f"{path}: top-level permissions must be read-only")
         if not data.get("concurrency"):
             findings.append(f"{path}: missing concurrency")
         jobs = data.get("jobs", {})
+        if not isinstance(jobs, dict):
+            findings.append(f"{path}: jobs must be a mapping")
+            continue
         for job_name, job in jobs.items():
             if not isinstance(job, dict):
                 continue

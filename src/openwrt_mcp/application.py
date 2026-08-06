@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from openwrt_mcp.observability import build_meta, request_context
@@ -13,6 +14,98 @@ from openwrt_mcp.sanitizer import sanitize_response_data
 from openwrt_mcp.validators import ValidationError
 
 Operation = Callable[..., Awaitable[dict[str, Any]]]
+_MISSING = object()
+
+
+@dataclass(frozen=True, slots=True)
+class InputField:
+    """One transport-independent capability input field."""
+
+    types: tuple[type[Any], ...]
+    required: bool = False
+    default: Any = _MISSING
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    max_length: int | None = None
+
+    def validate(self, name: str, value: Any) -> Any:
+        if int in self.types and isinstance(value, bool):
+            raise ValidationError(f"{name} must be an integer")
+        if not isinstance(value, self.types):
+            expected = " or ".join(item.__name__ for item in self.types)
+            raise ValidationError(f"{name} must be {expected}")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if self.minimum is not None and value < self.minimum:
+                raise ValidationError(f"{name} must be at least {self.minimum}")
+            if self.maximum is not None and value > self.maximum:
+                raise ValidationError(f"{name} must be at most {self.maximum}")
+        if isinstance(value, str) and self.max_length is not None:
+            if len(value) > self.max_length:
+                raise ValidationError(
+                    f"{name} must contain at most {self.max_length} characters"
+                )
+        return value
+
+    def as_json_schema(self) -> dict[str, Any]:
+        primitive = {
+            str: "string",
+            int: "integer",
+            float: "number",
+            bool: "boolean",
+            type(None): "null",
+        }
+        type_names = [primitive[item] for item in self.types if item in primitive]
+        schema: dict[str, Any]
+        if len(type_names) == 1:
+            schema = {"type": type_names[0]}
+        else:
+            schema = {"type": type_names}
+        if self.minimum is not None:
+            schema["minimum"] = self.minimum
+        if self.maximum is not None:
+            schema["maximum"] = self.maximum
+        if self.max_length is not None:
+            schema["maxLength"] = self.max_length
+        if self.default is not _MISSING:
+            schema["default"] = self.default
+        return schema
+
+
+@dataclass(frozen=True, slots=True)
+class InputSchema:
+    """Closed capability input contract shared by every transport."""
+
+    fields: Mapping[str, InputField] = field(default_factory=dict)
+
+    def validate(self, arguments: Any) -> dict[str, Any]:
+        if not isinstance(arguments, dict):
+            raise ValidationError("tool arguments must be a JSON object")
+        unknown = sorted(set(arguments) - set(self.fields))
+        if unknown:
+            raise ValidationError(f"Unknown argument(s): {', '.join(unknown)}")
+
+        normalized: dict[str, Any] = {}
+        for name, definition in self.fields.items():
+            if name in arguments:
+                normalized[name] = definition.validate(name, arguments[name])
+            elif definition.default is not _MISSING:
+                normalized[name] = copy.deepcopy(definition.default)
+            elif definition.required:
+                raise ValidationError(f"Missing required argument: {name}")
+        return normalized
+
+    def as_json_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                name: definition.as_json_schema()
+                for name, definition in self.fields.items()
+            },
+            "required": [
+                name for name, definition in self.fields.items() if definition.required
+            ],
+            "additionalProperties": False,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +126,7 @@ class CapabilityManifest:
     active: bool = True
     inactive_reason: str | None = None
     concurrency_group: str | None = None
+    input_schema: InputSchema = field(default_factory=InputSchema)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +146,7 @@ class CapabilityManifest:
             "active": self.active,
             "inactive_reason": self.inactive_reason,
             "concurrency_group": self.concurrency_group,
+            "input_schema": self.input_schema.as_json_schema(),
         }
 
 
@@ -101,7 +196,9 @@ class KernelResult:
                 message=str(sanitize_response_data(message)),
                 retryable=retryable,
                 suggestion=(
-                    str(sanitize_response_data(suggestion)) if suggestion is not None else None
+                    str(sanitize_response_data(suggestion))
+                    if suggestion is not None
+                    else None
                 ),
             ),
             meta=meta,
@@ -118,14 +215,6 @@ class KernelResult:
         if self.meta is not None:
             payload["_meta"] = self.meta
         return payload
-
-
-class ToolExecutionError(RuntimeError):
-    """Model-visible tool failure used by the official MCP SDK adapter."""
-
-    def __init__(self, error: KernelError) -> None:
-        self.error = error
-        super().__init__(f"{error.code}: {error.message}")
 
 
 class CapabilityRegistry:
@@ -149,7 +238,7 @@ class CapabilityRegistry:
 
 
 class InvocationKernel:
-    """One application-owned execution path for MCP and REST adapters."""
+    """One governed execution path for all capability invocations."""
 
     def __init__(
         self,
@@ -176,7 +265,12 @@ class InvocationKernel:
         async with self._locks_guard:
             return self._locks.setdefault(key, asyncio.Lock())
 
-    def _meta(self, name: str, started: float, manifest: CapabilityManifest) -> dict[str, Any]:
+    def _meta(
+        self,
+        name: str,
+        started: float,
+        manifest: CapabilityManifest,
+    ) -> dict[str, Any]:
         return {
             **build_meta(
                 name,
@@ -213,22 +307,28 @@ class InvocationKernel:
                     "No operation registered for active capability",
                     meta=self._meta(name, started, manifest),
                 )
+            try:
+                normalized = manifest.input_schema.validate(arguments)
+            except ValidationError as exc:
+                return KernelResult.failed(
+                    "INVALID_PARAM",
+                    str(exc),
+                    meta=self._meta(name, started, manifest),
+                )
 
             deadline_seconds = max(0.001, manifest.timeout_ms / 1000)
             lock: asyncio.Lock | None = None
             if not manifest.concurrent_safe:
-                # Default to whole-target serialization. A future multi-channel adapter may
-                # opt into a narrower reviewed concurrency group explicitly.
                 group = manifest.concurrency_group or "target"
                 lock = await self._lock_for(f"{self._target_identity}:{group}")
 
             try:
                 async with asyncio.timeout(deadline_seconds):
                     if lock is None:
-                        result = await operation(**arguments)
+                        result = await operation(**normalized)
                     else:
                         async with lock:
-                            result = await operation(**arguments)
+                            result = await operation(**normalized)
                 meta = self._meta(name, started, manifest)
                 if isinstance(result, dict) and result.get("success") is False:
                     error = result.get("error")
@@ -236,12 +336,16 @@ class InvocationKernel:
                         return KernelResult.failed(
                             str(error.get("code", "UPSTREAM_FAILURE")),
                             str(error.get("message", "Operation failed")),
-                            retryable=bool(error.get("retryable", False) and manifest.retryable),
+                            retryable=bool(
+                                error.get("retryable", False) and manifest.retryable
+                            ),
                             suggestion=error.get("suggestion"),
                             meta=meta,
                         )
                     return KernelResult.failed(
-                        "UPSTREAM_FAILURE", str(error or "Operation failed"), meta=meta
+                        "UPSTREAM_FAILURE",
+                        str(error or "Operation failed"),
+                        meta=meta,
                     )
                 return KernelResult.ok(result, meta=meta)
             except asyncio.CancelledError:
@@ -253,7 +357,7 @@ class InvocationKernel:
                     retryable=manifest.retryable,
                     meta=self._meta(name, started, manifest),
                 )
-            except (ValidationError, TypeError) as exc:
+            except (ValidationError, TypeError, ValueError) as exc:
                 return KernelResult.failed(
                     "INVALID_PARAM",
                     str(exc),
@@ -268,7 +372,7 @@ class InvocationKernel:
 
 
 def decode_kernel_response(result: KernelResult) -> tuple[int, dict[str, Any]]:
-    """Map one governed result to a REST status and JSON object."""
+    """Map a governed result to a conventional HTTP status for future adapters."""
     if result.success:
         return 200, result.as_dict()
     code = (result.error or KernelError("INTERNAL", "Unknown error")).code

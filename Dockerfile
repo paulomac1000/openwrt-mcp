@@ -10,14 +10,12 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin openwrt \
     && chown -R openwrt:openwrt /app
 
 WORKDIR /app
-
-# CI generates the hashed lock, builds and tests this exact wheel, then builds the image.
 COPY requirements-runtime.lock /tmp/requirements-runtime.lock
 COPY dist/*.whl /tmp/openwrt-mcp.whl
 RUN python -m pip install --no-cache-dir --require-hashes -r /tmp/requirements-runtime.lock \
     && python -m pip install --no-cache-dir --no-deps /tmp/openwrt-mcp.whl \
-    && rm /tmp/requirements-runtime.lock /tmp/openwrt-mcp.whl \
-    && python -m pip check
+    && python -m pip check \
+    && rm /tmp/requirements-runtime.lock /tmp/openwrt-mcp.whl
 
 USER openwrt
 CMD ["openwrt-mcp"]

@@ -1,87 +1,52 @@
-name: Publish container
+name: Publish tested container
 
 on:
-  push:
-    tags: ["v*"]
-  workflow_dispatch:
-    inputs:
-      release_ref:
-        description: Commit SHA or tag to validate and publish
-        required: true
-        type: string
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref }}
+  group: publish-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
-  validate-and-publish:
-    environment: release
+  publish:
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 25
     permissions:
+      actions: read
       contents: read
       packages: write
       id-token: write
       attestations: write
     steps:
-      - name: Checkout selected revision
+      - name: Checkout exact CI revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.sha }}
-          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Resolve immutable release identity
-        id: revision
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_REF_NAME: ${{ github.ref_name }}
-          REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref }}
-        run: |
-          set -euo pipefail
-          release_sha="$(git rev-parse HEAD)"
-          release_short_sha="$(git rev-parse --short=12 HEAD)"
-          release_tag=""
-          if [[ "$EVENT_NAME" == "push" ]]; then
-            release_tag="$EVENT_REF_NAME"
-          elif [[ "$REQUESTED_REF" == refs/tags/* ]]; then
-            release_tag="${REQUESTED_REF#refs/tags/}"
-          elif git show-ref --verify --quiet "refs/tags/$REQUESTED_REF"; then
-            release_tag="$REQUESTED_REF"
-          fi
-          if [[ -n "$release_tag" ]]; then
-            test "$(git rev-parse "refs/tags/$release_tag^{commit}")" = "$release_sha"
-          fi
-          echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
-          echo "short_sha=$release_short_sha" >> "$GITHUB_OUTPUT"
-          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - name: Download exact CI evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            pyproject.toml
-            requirements-runtime.in
-            requirements-dev.in
+          name: openwrt-mcp-evidence-${{ github.event.workflow_run.id }}
+          path: .
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Validate exact revision and build wheel
+      - name: Verify downloaded wheel and locks
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]" build
-          python scripts/ci.py
-          python -m build --wheel
-          python -m venv /tmp/openwrt-release-smoke
-          /tmp/openwrt-release-smoke/bin/python -m pip install dist/*.whl
-          (cd /tmp && OPENWRT_MOCK_MODE=1 /tmp/openwrt-release-smoke/bin/python -m openwrt_mcp.artifact_smoke)
-          test "$(git rev-parse HEAD)" = "${{ steps.revision.outputs.sha }}"
+          test "$(git rev-parse HEAD)" = "${{ github.event.workflow_run.head_sha }}"
+          sha256sum --check wheel.sha256
+          test -s requirements-runtime.lock
+          test -s requirements-dev.lock
 
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
@@ -90,49 +55,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute release tags
-        id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=${{ steps.revision.outputs.tag }},enable=${{ steps.revision.outputs.tag != '' }}
-            type=raw,value=sha-${{ steps.revision.outputs.short_sha }}
-
-      - name: Build release image once
+      - name: Build image only from tested artifacts
         run: |
           set -euo pipefail
-          docker build \
-            --tag ghcr.io/${{ github.repository }}:sha-${{ steps.revision.outputs.short_sha }} \
-            .
-          if [[ -n "${{ steps.revision.outputs.tag }}" ]]; then
-            docker tag \
-              ghcr.io/${{ github.repository }}:sha-${{ steps.revision.outputs.short_sha }} \
-              ghcr.io/${{ github.repository }}:${{ steps.revision.outputs.tag }}
-          fi
-
-      - name: Smoke exact release image
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -e OPENWRT_MOCK_MODE=1 \
-            ghcr.io/${{ github.repository }}:sha-${{ steps.revision.outputs.short_sha }} \
+          tag=ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}
+          docker build --tag "$tag" .
+          docker run --rm -e OPENWRT_MOCK_MODE=1 "$tag" \
             python -m openwrt_mcp.artifact_smoke
+          docker push "$tag"
 
-      - name: Push smoke-tested image
-        id: push
-        shell: bash
+      - name: Resolve pushed digest
+        id: digest
         run: |
           set -euo pipefail
-          image=ghcr.io/${{ github.repository }}
-          docker push --all-tags "$image"
-          digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$image:sha-${{ steps.revision.outputs.short_sha }}" | cut -d@ -f2)"
+          tag=ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}
+          docker pull "$tag"
+          digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$tag" | cut -d@ -f2)"
           test -n "$digest"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "value=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Attest pushed digest
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
         with:
           subject-name: ghcr.io/${{ github.repository }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.digest.outputs.value }}
           push-to-registry: true
