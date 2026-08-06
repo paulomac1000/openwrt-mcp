@@ -19,7 +19,7 @@ env:
 jobs:
   quality-artifact-container:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - name: Checkout exact candidate revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -43,8 +43,10 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: |
-            pyproject.toml
             requirements-runtime.in
+            requirements-dev.in
+            requirements-runtime.lock
+            requirements-dev.lock
 
       - name: Verify assessed revisions
         shell: bash
@@ -55,36 +57,54 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           test "$(git -C .trusted/ai-skills rev-parse HEAD)" = "$AI_SKILLS_SHA"
 
-      - name: Resolve hashed dependency locks
+      - name: Resolve candidate locks for review
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install pip-tools==7.6.0
-          python -m piptools compile --pre --generate-hashes \
-            --output-file requirements-runtime.lock requirements-runtime.in
-          python -m piptools compile --pre --generate-hashes --extra dev \
-            --output-file requirements-dev.lock pyproject.toml
+          python -m piptools compile --generate-hashes --allow-unsafe \
+            --output-file /tmp/requirements-runtime.lock requirements-runtime.in
+          python -m piptools compile --generate-hashes --allow-unsafe \
+            --output-file /tmp/requirements-dev.lock requirements-dev.in
+          cp /tmp/requirements-runtime.lock generated-requirements-runtime.lock
+          cp /tmp/requirements-dev.lock generated-requirements-dev.lock
+
+      - name: Upload generated locks for review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openwrt-mcp-lock-candidates-${{ github.run_id }}
+          path: generated-requirements-*.lock
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require reviewed committed locks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f requirements-runtime.lock
+          test -f requirements-dev.lock
+          cmp requirements-runtime.lock /tmp/requirements-runtime.lock
+          cmp requirements-dev.lock /tmp/requirements-dev.lock
 
       - name: Install exact development environment
         run: |
           set -euo pipefail
           python -m pip install --require-hashes -r requirements-dev.lock
-          python -m pip install --no-deps -e .
+          python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
 
       - name: Run trusted standards validators
-        shell: bash
         run: |
           set -euo pipefail
           python .trusted/ai-skills/skills/afds-doc-writer/validate.py docs/openwrt-mcp.md
           python .trusted/ai-skills/skills/ci-cd-architect/tools/check_github_actions_policy.py "$GITHUB_WORKSPACE"
 
-      - name: Run candidate-tree diagnostics
+      - name: Run repository diagnostics
         run: |
           set -euo pipefail
           python scripts/check_ai_skills_lock.py
-          python scripts/validate_docs.py
+          python scripts/validate_docs.py AGENTS.md docs/openwrt-mcp.md
           python scripts/check_workflows.py
 
       - name: Static quality and security
@@ -105,40 +125,38 @@ jobs:
       - name: Run branch coverage
         run: |
           set -euo pipefail
-          python -m coverage run --branch -m pytest -m "not integration"
+          python -m coverage run --branch -m pytest -q -m "not integration"
           python -m coverage report --fail-under=80
           python -m coverage xml -o coverage.xml
 
-      - name: Build exact wheel
+      - name: Build exact wheel without build isolation
         run: |
           set -euo pipefail
           rm -rf build dist
-          python -m build --wheel
+          python -m build --wheel --no-isolation
           test "$(find dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
           sha256sum dist/*.whl | tee wheel.sha256
 
       - name: Smoke exact installed wheel through official client
-        shell: bash
         run: |
           set -euo pipefail
           python -m venv /tmp/openwrt-wheel-smoke
-          /tmp/openwrt-wheel-smoke/bin/python -m pip install --upgrade pip
-          /tmp/openwrt-wheel-smoke/bin/python -m pip install --require-hashes -r requirements-runtime.lock
+          /tmp/openwrt-wheel-smoke/bin/python -m pip install --require-hashes \
+            -r requirements-runtime.lock
           /tmp/openwrt-wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
-          (cd /tmp && OPENWRT_MOCK_MODE=1 /tmp/openwrt-wheel-smoke/bin/python -m openwrt_mcp.artifact_smoke)
+          (cd /tmp && OPENWRT_MOCK_MODE=1 \
+            /tmp/openwrt-wheel-smoke/bin/python -m openwrt_mcp.artifact_smoke)
 
-      - name: Build image from tested wheel and lock
+      - name: Build image from tested wheel and reviewed lock
         run: docker build --tag openwrt-mcp:${{ github.sha }} .
 
       - name: Smoke exact container image
         run: |
-          set -euo pipefail
-          docker run --rm \
-            -e OPENWRT_MOCK_MODE=1 \
+          docker run --rm -e OPENWRT_MOCK_MODE=1 \
             openwrt-mcp:${{ github.sha }} \
             python -m openwrt_mcp.artifact_smoke
 
-      - name: Upload diagnostics, locks, and wheel
+      - name: Upload provider-backed evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
