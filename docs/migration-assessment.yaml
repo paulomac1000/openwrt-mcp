@@ -1,0 +1,165 @@
+schema_version: 1
+assessment_id: openwrt-mcp-ai-skills-1.2.0
+source:
+  repository: paulomac1000/openwrt-mcp
+  revision: c2ccb57e9ac18b38843c34790062648eda7e4c7c
+target:
+  maturity: L2
+  branch: agent/ai-skills-compliance-refactor
+standards:
+  repository: paulomac1000/ai-skills
+  revision: 661ff01a5e70d58d6c94a12545b24647e52063ed
+  skill_version: 1.2.0
+profiles:
+  - python
+  - mcp-server
+  - router
+scope:
+  included:
+    - configuration order and composition root
+    - one invocation kernel for MCP and REST
+    - capability manifests and active catalog
+    - SSH safety, deadlines, serialization, and write retry policy
+    - loopback REST hardening
+    - mock execution and regression tests
+    - AFDS, AGENTS.md, and CI/CD controls
+  excluded:
+    - activation of write or destructive capabilities
+    - authenticated remote Streamable HTTP
+    - real-router mutation tests
+    - independent production approval
+behavior:
+  preserved:
+    - 24 stable public tool names in the supported catalog
+    - 19 historical read capability behaviors
+    - deterministic JSON-compatible result envelopes
+  intentionally_changed:
+    - write and destructive tools are inactive instead of environment-gated
+    - legacy HTTP plus SSE is removed
+    - MCP is stdio-only until authenticated Streamable HTTP is implemented
+    - REST invokes the application kernel instead of raw registered functions
+    - write SSH execution never reconnects and retries
+rules:
+  configuration_order:
+    status: implemented
+    evidence:
+      - src/openwrt_mcp/settings.py
+      - tests/unit/test_settings.py
+  invocation_kernel:
+    status: implemented
+    evidence:
+      - src/openwrt_mcp/application.py
+      - tests/unit/test_kernel_and_registration.py
+  complete_manifests:
+    status: implemented
+    evidence:
+      - src/openwrt_mcp/application.py
+      - tests/unit/test_kernel_and_registration.py
+  transport:
+    status: partially-implemented
+    evidence:
+      - src/openwrt_mcp/server.py
+      - docs/openwrt-mcp.md
+    waiver:
+      owner: openwrt-mcp-maintainers
+      expires: 2026-12-31
+      reason: Authenticated Streamable HTTP remains outside this local-only migration. The official MCP Python SDK v2 stdio adapter is implemented, while exact-wheel real-client evidence is delegated to hosted CI because the SDK package is unavailable in the restricted local environment.
+      compensating_controls:
+        - stdio is the only advertised MCP transport
+        - legacy SSE is removed
+        - REST binds to loopback and uses the same kernel
+  protocol_native_errors:
+    status: implemented-pending-hosted-evidence
+    evidence:
+      - src/openwrt_mcp/server.py
+      - src/openwrt_mcp/application.py
+      - tests/unit/test_kernel_errors.py
+      - tests/integration/test_official_mcp_client.py
+    verification_note: The official-client test is skipped locally when the mcp v2 package is unavailable and is mandatory in hosted CI.
+  authentication_authorization:
+    status: partially-implemented
+    evidence:
+      - src/openwrt_mcp/server.py
+    waiver:
+      owner: openwrt-mcp-maintainers
+      expires: 2026-10-31
+      reason: Local stdio inherits the operating-system process boundary; remote MCP transport remains disabled.
+      compensating_controls:
+        - no remote MCP listener
+        - optional REST remains loopback-only
+        - all writes are inactive
+  target_identity:
+    status: partially-implemented
+    evidence:
+      - src/openwrt_mcp/tools/ssh_client.py
+    waiver:
+      owner: openwrt-mcp-maintainers
+      expires: 2026-10-31
+      reason: Read-only development can operate without enrolled host fingerprints; write activation requires OPENWRT_KNOWN_HOSTS.
+      compensating_controls:
+        - write path fails closed without known_hosts
+        - no target fallback exists
+  concurrency:
+    status: implemented
+    evidence:
+      - src/openwrt_mcp/application.py
+      - src/openwrt_mcp/tools/ssh_client.py
+      - tests/unit/test_ssh_client_hardening.py
+  write_safety:
+    status: implemented-inactive
+    evidence:
+      - src/openwrt_mcp/validators.py
+      - src/openwrt_mcp/tools/writer.py
+      - tests/unit/test_validators_security.py
+      - tests/unit/test_writer.py
+  documentation:
+    status: implemented
+    evidence:
+      - AGENTS.md
+      - docs/openwrt-mcp.md
+      - scripts/validate_docs.py
+  ci_artifact_identity:
+    status: implemented-by-workflow
+    evidence:
+      - .github/workflows/ci.yml
+      - Dockerfile
+verification:
+  local:
+    - .venv/bin/python scripts/ci.py
+  hosted:
+    - GitHub Actions CI on the exact final branch SHA
+    - exact wheel install and smoke
+    - exact container image smoke
+real_system_todos:
+  - id: TODO-REAL-SSH-IDENTITY
+    owner: agent-with-isolated-openwrt-lab
+    preconditions:
+      - disposable OpenWRT test router
+      - enrolled known_hosts fingerprint
+      - isolated LAN
+    test: Verify host-key mismatch fails before any command.
+  - id: TODO-REAL-CANCELLATION
+    owner: agent-with-isolated-openwrt-lab
+    preconditions:
+      - controlled slow SSH command from the fixed read catalog
+    test: Cancel an invocation and prove command, lock, and connection cleanup are bounded.
+  - id: TODO-REAL-WRITE-WORKFLOW
+    owner: agent-with-isolated-openwrt-lab
+    preconditions:
+      - reviewed principal-bound approval implementation
+      - snapshot and rollback plan
+      - non-production router
+    test: Plan, execute, verify, and compensate an interface configuration change without automatic retry.
+rollback:
+  strategy: Reset the branch to c2ccb57e9ac18b38843c34790062648eda7e4c7c. No router state migration is performed.
+residual_risks:
+  - Official MCP Python SDK v2 behavior is covered by source-level and adapter tests locally, but exact-wheel client evidence remains provider-backed CI evidence.
+  - Authenticated Streamable HTTP is intentionally not implemented; stdio is the only MCP transport.
+  - No real-router test was executed in the restricted environment.
+  - Complete transitive hashed dependency locks require a trusted dependency-resolution environment.
+independent_decision:
+  status: pending
+  required_evidence:
+    - provider-backed CI for the exact final SHA
+    - official-client stdio smoke against the exact wheel
+    - review of every deferred waiver

@@ -1,960 +1,436 @@
-"""MCP tool registration — all 24 OpenWRT tools wrapped as MCP tools."""
+"""Public MCP registration backed by one invocation kernel."""
 
-import asyncio
-import logging
-import time
+from __future__ import annotations
+
+from collections.abc import Callable
 from typing import Any
 
-from openwrt_mcp.observability import (
-    TOOLS_VERSION,
-    build_meta,
-    generate_request_id,
-    set_request_id,
+from openwrt_mcp import __version__
+from openwrt_mcp.application import (
+    CapabilityManifest,
+    CapabilityRegistry,
+    InvocationKernel,
+    KernelError,
+    ToolExecutionError,
 )
-from openwrt_mcp.tools.constants import SSH_TIMEOUT
-from openwrt_mcp.tools.explorer import get_explorer
-from openwrt_mcp.tools.response_helpers import (
-    _error_response,
-    _error_response_extended,
-    _success_response,
+from openwrt_mcp.settings import Settings
+
+
+_WRITE_INACTIVE_REASON = (
+    "Write capabilities are retained in the supported catalog but disabled until "
+    "principal-bound, expiring approvals and authenticated Streamable HTTP are implemented."
 )
-from openwrt_mcp.tools.writer import check_write_enabled, get_writer
-from openwrt_mcp.validators import ValidationError
-
-logger = logging.getLogger("openwrt-mcp.tools")
 
 
-def _make_manifest(
+def _read_manifest(
     name: str,
-    timeout_ms: int = 15000,
-    latency: str = "moderate",
-) -> dict[str, Any]:
-    """Create a READ-only tool manifest."""
-    return {
-        "name": name,
-        "version": TOOLS_VERSION,
-        "risk": "READ",
-        "side_effects": "read",
-        "idempotent": True,
-        "retryable": True,
-        "concurrent_safe": False,  # SSHConnection.execute() shares mutable state without locking
-        "timeout_ms": timeout_ms,
-        "requires_confirmation": False,
-        "determinism": "env-dependent",
-        "latency": latency,
-        "cost": "cheap",
-        "impact": "none",
-        "privacy": "none",
-        "reversible": True,
+    *,
+    confidentiality: str = "internal",
+    timeout_ms: int = 15_000,
+    cost: str = "cheap",
+) -> CapabilityManifest:
+    return CapabilityManifest(
+        name=name,
+        version=__version__,
+        risk="READ",
+        side_effects="read",
+        confidentiality=confidentiality,
+        operational_impact="none",
+        cost=cost,
+        idempotent=True,
+        retryable=True,
+        concurrent_safe=False,
+        timeout_ms=timeout_ms,
+        requires_confirmation=False,
+        reversible=True,
+    )
+
+
+def _inactive_write_manifest(name: str, *, destructive: bool = False) -> CapabilityManifest:
+    return CapabilityManifest(
+        name=name,
+        version=__version__,
+        risk="DESTRUCTIVE" if destructive else "WRITE",
+        side_effects="destructive" if destructive else "write",
+        confidentiality="internal",
+        operational_impact="outage" if destructive else "persistent",
+        cost="expensive" if destructive else "moderate",
+        idempotent=False,
+        retryable=False,
+        concurrent_safe=False,
+        timeout_ms=30_000 if destructive else 20_000,
+        requires_confirmation=True,
+        reversible=False,
+        active=False,
+        inactive_reason=_WRITE_INACTIVE_REASON,
+    )
+
+
+def build_manifest_registry() -> CapabilityRegistry:
+    manifests = {
+        "test_router_connection": _read_manifest("test_router_connection", timeout_ms=10_000),
+        "get_router_info": _read_manifest("get_router_info"),
+        "get_router_wifi_status": _read_manifest(
+            "get_router_wifi_status", confidentiality="personal"
+        ),
+        "get_router_dhcp_leases": _read_manifest(
+            "get_router_dhcp_leases", confidentiality="personal"
+        ),
+        "get_router_firewall_rules": _read_manifest(
+            "get_router_firewall_rules", confidentiality="sensitive"
+        ),
+        "read_router_uci_config": _read_manifest(
+            "read_router_uci_config", confidentiality="sensitive"
+        ),
+        "list_router_packages": _read_manifest("list_router_packages"),
+        "get_router_logs": _read_manifest(
+            "get_router_logs", confidentiality="sensitive", timeout_ms=30_000
+        ),
+        "search_router_logs": _read_manifest(
+            "search_router_logs", confidentiality="sensitive", timeout_ms=30_000
+        ),
+        "diagnose_router_connectivity": _read_manifest(
+            "diagnose_router_connectivity", timeout_ms=30_000, cost="moderate"
+        ),
+        "get_dhcp_static_leases": _read_manifest(
+            "get_dhcp_static_leases", confidentiality="personal"
+        ),
+        "search_dhcp_logs": _read_manifest(
+            "search_dhcp_logs", confidentiality="personal", timeout_ms=30_000
+        ),
+        "get_device_dhcp_details": _read_manifest(
+            "get_device_dhcp_details", confidentiality="personal"
+        ),
+        "get_router_context": _read_manifest(
+            "get_router_context", confidentiality="sensitive", timeout_ms=30_000
+        ),
+        "describe_router_capabilities": _read_manifest(
+            "describe_router_capabilities", confidentiality="public", timeout_ms=3_000
+        ),
+        "ping_host": _read_manifest("ping_host", timeout_ms=10_000),
+        "traceroute_host": _read_manifest("traceroute_host", timeout_ms=30_000),
+        "nslookup_host": _read_manifest("nslookup_host", timeout_ms=10_000),
+        "wifi_scan": _read_manifest(
+            "wifi_scan", confidentiality="personal", timeout_ms=20_000
+        ),
+        "restart_interface": _inactive_write_manifest("restart_interface"),
+        "reload_network": _inactive_write_manifest("reload_network"),
+        "uci_set": _inactive_write_manifest("uci_set"),
+        "uci_commit": _inactive_write_manifest("uci_commit"),
+        "reboot_device": _inactive_write_manifest("reboot_device", destructive=True),
     }
+    return CapabilityRegistry(manifests)
 
 
-def _make_write_manifest(
-    name: str,
-    timeout_ms: int = 15000,
-    latency: str = "moderate",
-) -> dict[str, Any]:
-    """Create a WRITE tool manifest."""
-    return {
-        "name": name,
-        "version": TOOLS_VERSION,
-        "risk": "WRITE",
-        "side_effects": "write",
-        "idempotent": True,
-        "retryable": True,
-        "concurrent_safe": False,
-        "timeout_ms": timeout_ms,
-        "requires_confirmation": True,
-        "determinism": "env-dependent",
-        "latency": latency,
-        "cost": "moderate",
-        "impact": "persistent",
-        "privacy": "none",
-        "reversible": True,
-    }
+def build_invocation_kernel(settings: Settings, explorer: Any) -> InvocationKernel:
+    registry = build_manifest_registry()
 
+    async def call(
+        method_name: str,
+        *args: Any,
+        timeout_seconds: int = settings.ssh_timeout,
+    ) -> dict[str, Any]:
+        method = getattr(explorer, method_name)
+        with explorer.ssh.timeout_scope(timeout_seconds):
+            return await method(*args)
 
-def _make_destructive_manifest(
-    name: str,
-    timeout_ms: int = 30000,
-    latency: str = "slow",
-) -> dict[str, Any]:
-    """Create a DESTRUCTIVE tool manifest for irreversible operations.
+    async def test_router_connection(timeout_seconds: int = settings.ssh_timeout) -> dict[str, Any]:
+        return await call("test_connection", timeout_seconds=timeout_seconds)
 
-    [L3+] Reboot, factory reset, and delete operations are irreversible at
-    the application level. Their manifest MUST advertise idempotent=False,
-    retryable=False, reversible=False so an agent never re-issues them or
-    skips confirmation. See the Risk Consistency Matrix.
-    """
-    return {
-        "name": name,
-        "version": TOOLS_VERSION,
-        "risk": "DESTRUCTIVE",
-        "side_effects": "destructive",
-        "idempotent": False,
-        "retryable": False,
-        "concurrent_safe": False,
-        "timeout_ms": timeout_ms,
-        "requires_confirmation": True,
-        "determinism": "env-dependent",
-        "latency": latency,
-        "cost": "expensive",
-        "impact": "service_outage",
-        "privacy": "none",
-        "reversible": False,
-    }
+    async def get_router_info(timeout_seconds: int = settings.ssh_timeout) -> dict[str, Any]:
+        return await call("get_system_info", timeout_seconds=timeout_seconds)
 
+    async def get_router_wifi_status(timeout_seconds: int = settings.ssh_timeout) -> dict[str, Any]:
+        return await call("get_wifi_status", timeout_seconds=timeout_seconds)
 
-def _inject_risk_prefixes(all_tools: dict[str, Any], manifest_map: dict[str, Any]) -> None:
-    """Inject risk prefixes into tool docstrings from manifest SSOT.
+    async def get_router_dhcp_leases(timeout_seconds: int = settings.ssh_timeout) -> dict[str, Any]:
+        return await call("list_dhcp_leases", timeout_seconds=timeout_seconds)
 
-    [L2+] Standards Rule 1.1: Risk annotations in docstrings MUST NOT
-    be manually authored if a manifest exists; they are dynamically
-    injected from the manifest (Single Source of Truth).
-    """
-    KNOWN_PREFIXES = frozenset({"[READ]", "[WRITE]", "[DANGEROUS]", "[DESTRUCTIVE]", "[SENSITIVE]"})
-    for name, fn in all_tools.items():
-        manifest = manifest_map.get(name, {})
-        risk = manifest.get("risk", "READ")
-        # Tool objects wrap the raw function — unwrap to reach __doc__
-        raw_fn = fn
-        for attr in ("fn", "func", "_func", "function"):
-            if hasattr(fn, attr):
-                inner = getattr(fn, attr)
-                if callable(inner):
-                    raw_fn = inner
-                    break
-        doc = (raw_fn.__doc__ or "").strip()
-        for prefix in KNOWN_PREFIXES:
-            if doc.startswith(prefix):
-                doc = doc[len(prefix) :].lstrip()
-                break
-        new_doc = f"[{risk}] {doc}"
-        raw_fn.__doc__ = new_doc
-        # Also update Tool.description if it's a FastMCP Tool object
-        if hasattr(fn, "description"):
-            try:
-                fn.description = new_doc.split("\n")[0].rstrip(".")
-            except Exception:
-                pass
+    async def get_router_firewall_rules(
+        timeout_seconds: int = settings.ssh_timeout,
+    ) -> dict[str, Any]:
+        return await call("get_firewall_rules", timeout_seconds=timeout_seconds)
 
+    async def read_router_uci_config(
+        config_name: str, timeout_seconds: int = settings.ssh_timeout
+    ) -> dict[str, Any]:
+        return await call("read_uci_config", config_name, timeout_seconds=timeout_seconds)
 
-def register_openwrt_tools(mcp: Any) -> None:
-    """Register OpenWRT tools in the MCP server."""
+    async def list_router_packages(timeout_seconds: int = settings.ssh_timeout) -> dict[str, Any]:
+        return await call("list_installed_packages", timeout_seconds=timeout_seconds)
 
-    @mcp.tool()
-    async def test_router_connection(timeout_seconds: int = SSH_TIMEOUT) -> str:
-        """Test SSH connection to the OpenWRT router.
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, status (connected/disconnected),
-            host, model, and release version.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.test_connection()
-            return _success_response(result, _meta=build_meta("test_router_connection", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def get_router_info(timeout_seconds: int = SSH_TIMEOUT) -> str:
-        """Fetch router system info (model, version, memory, uptime).
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, data containing model, hostname,
-            openwrt_version, kernel, uptime, and memory stats.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.get_system_info()
-            return _success_response(result, _meta=build_meta("get_router_info", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def get_router_wifi_status(timeout_seconds: int = SSH_TIMEOUT) -> str:
-        """Fetch WiFi status and list of connected clients.
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, interfaces_count, interfaces list
-            with SSID, mode, radio, and connected clients.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.get_wifi_status()
-            return _success_response(result, _meta=build_meta("get_router_wifi_status", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def get_router_dhcp_leases(timeout_seconds: int = SSH_TIMEOUT) -> str:
-        """Fetch active DHCP leases.
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, leases_count, and leases list
-            with MAC, IP, hostname, and expiry.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.list_dhcp_leases()
-            return _success_response(result, _meta=build_meta("get_router_dhcp_leases", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def get_router_firewall_rules(timeout_seconds: int = SSH_TIMEOUT) -> str:
-        """Fetch firewall rules (iptables/nftables/fw4).
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, firewall_type, rules_preview,
-            and full_output_truncated boolean.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.get_firewall_rules()
-            return _success_response(result, _meta=build_meta("get_router_firewall_rules", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def read_router_uci_config(config_name: str, timeout_seconds: int = SSH_TIMEOUT) -> str:
-        """Read UCI configuration (dhcp, network, wireless, firewall, system).
-
-        Args:
-            config_name: UCI configuration name (e.g., dhcp, network, wireless).
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, config_name, entries_count, and sample.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.read_uci_config(config_name)
-            return _success_response(result, _meta=build_meta("read_router_uci_config", _start))
-        except ValidationError as e:
-            return _error_response_extended(
-                "INVALID_PARAM",
-                str(e),
-                False,
-                suggestion="Check the configuration name and try again.",
-            )
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def list_router_packages(timeout_seconds: int = SSH_TIMEOUT) -> str:
-        """Fetch list of installed OpenWRT packages.
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, packages_count, and packages_sample
-            list with name and version.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.list_installed_packages()
-            return _success_response(result, _meta=build_meta("list_router_packages", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
     async def get_router_logs(
-        lines: int = 50, filter_level: str = "all", timeout_seconds: int = SSH_TIMEOUT
-    ) -> str:
-        """Fetch router system logs.
+        lines: int = 50,
+        filter_level: str = "all",
+        timeout_seconds: int = settings.ssh_timeout,
+    ) -> dict[str, Any]:
+        return await call("get_router_logs", lines, filter_level, timeout_seconds=timeout_seconds)
 
-        Args:
-            lines: Number of log lines to return (10-200, default 50).
-            filter_level: Filter logs by keyword or "all" (default "all").
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, lines_count, and logs text.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.get_router_logs(lines, filter_level)
-            return _success_response(result, _meta=build_meta("get_router_logs", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
     async def search_router_logs(
-        search_term: str, max_results: int = 30, timeout_seconds: int = SSH_TIMEOUT
-    ) -> str:
-        """Search for a phrase in router logs.
-
-        Args:
-            search_term: Phrase to search for in log entries.
-            max_results: Maximum number of matching results (default 30).
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, search_term, results_count, and results text.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.search_router_logs(search_term, max_results)
-            if isinstance(result, dict) and result.get("success") is False:
-                err = result.get("error", {})
-                if isinstance(err, dict):
-                    return _error_response_extended(
-                        err.get("code", "UNKNOWN"),
-                        err.get("message", str(err)),
-                        err.get("retryable", False),
-                        suggestion=err.get("suggestion"),
-                    )
-                return _error_response(str(err))
-            return _success_response(result, _meta=build_meta("search_router_logs", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def diagnose_router_connectivity(
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Test router internet connectivity (ping, DNS).
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, tests dict per service, and
-            summary with passed/failed/total counts and health rating.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.diagnose_router_connectivity()
-
-            return _success_response(
-                result, _meta=build_meta("diagnose_router_connectivity", _start)
-            )
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def get_dhcp_static_leases(timeout_seconds: int = SSH_TIMEOUT) -> str:
-        """Fetch static DHCP reservations.
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, static_leases_count, and leases list
-            with MAC, IP, and hostname.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.get_dhcp_static_leases()
-            return _success_response(result, _meta=build_meta("get_dhcp_static_leases", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def search_dhcp_logs(
         search_term: str,
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Search DHCP events in router logs.
+        max_results: int = 30,
+        timeout_seconds: int = settings.ssh_timeout,
+    ) -> dict[str, Any]:
+        return await call(
+            "search_router_logs", search_term, max_results, timeout_seconds=timeout_seconds
+        )
 
-        Args:
-            search_term: MAC address, IP, or hostname to search for.
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
+    async def diagnose_router_connectivity(
+        timeout_seconds: int = settings.ssh_timeout,
+    ) -> dict[str, Any]:
+        return await call("diagnose_router_connectivity", timeout_seconds=timeout_seconds)
 
-        Returns:
-            JSON string with success, search_term, events_found, and
-            events list with raw_log, event_type, and contains_search_term.
+    async def get_dhcp_static_leases(
+        timeout_seconds: int = settings.ssh_timeout,
+    ) -> dict[str, Any]:
+        return await call("get_dhcp_static_leases", timeout_seconds=timeout_seconds)
 
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.search_dhcp_logs(search_term)
-            if isinstance(result, dict) and result.get("success") is False:
-                err = result.get("error", {})
-                if isinstance(err, dict):
-                    return _error_response_extended(
-                        err.get("code", "UNKNOWN"),
-                        err.get("message", str(err)),
-                        err.get("retryable", False),
-                        suggestion=err.get("suggestion"),
-                    )
-                return _error_response(str(err))
-            return _success_response(result, _meta=build_meta("search_dhcp_logs", _start))
-        except Exception as e:
-            return _error_response(str(e))
+    async def search_dhcp_logs(
+        search_term: str, timeout_seconds: int = settings.ssh_timeout
+    ) -> dict[str, Any]:
+        return await call("search_dhcp_logs", search_term, timeout_seconds=timeout_seconds)
 
-    @mcp.tool()
     async def get_device_dhcp_details(
         mac_address: str | None = None,
         ip_address: str | None = None,
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Fetch DHCP device details (lease, reservation, logs).
+        timeout_seconds: int = settings.ssh_timeout,
+    ) -> dict[str, Any]:
+        return await call(
+            "get_device_dhcp_details",
+            mac_address,
+            ip_address,
+            timeout_seconds=timeout_seconds,
+        )
 
-        Args:
-            mac_address: MAC address to look up (format aa:bb:cc:dd:ee:ff).
-            ip_address: IP address to look up (format 192.168.1.100).
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
+    async def get_router_context(timeout_seconds: int = settings.ssh_timeout) -> dict[str, Any]:
+        return await call("get_router_context", timeout_seconds=timeout_seconds)
 
-        Returns:
-            JSON string with success, device_identifier, current_lease,
-            static_reservation, has_static_reservation, is_currently_connected,
-            and recent_log_events.
-
-        @since v1.0.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.get_device_dhcp_details(mac_address, ip_address)
-            if isinstance(result, dict) and result.get("success") is False:
-                err = result.get("error", {})
-                if isinstance(err, dict):
-                    return _error_response_extended(
-                        err.get("code", "UNKNOWN"),
-                        err.get("message", str(err)),
-                        err.get("retryable", False),
-                        suggestion=err.get("suggestion"),
-                    )
-                return _error_response(str(err))
-            return _success_response(result, _meta=build_meta("get_device_dhcp_details", _start))
-        except ValidationError as e:
-            return _error_response_extended(
-                "INVALID_PARAM",
-                str(e),
-                False,
-                suggestion="Provide a valid MAC (aa:bb:cc:dd:ee:ff) or IP address.",
-            )
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def get_router_context(timeout_seconds: int = SSH_TIMEOUT) -> str:
-        """Fetch unified router context snapshot (system, wifi, DHCP, connectivity).
-
-        Aggregates system info, WiFi status, DHCP lease count, and connectivity
-        health into a single response. Partial failures degrade gracefully
-        with per-subsection success flags.
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, device_id, model, uptime_seconds,
-            subsections dict with per-call success/error, and aggregated fields.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.get_router_context()
-            return _success_response(result, _meta=build_meta("get_router_context", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def describe_router_capabilities() -> str:
-        """Introspect server capabilities: tools, contexts, transports, version.
-
-        Returns a complete catalog of all registered MCP tools with their
-        manifests (risk, timeout, latency), context collectors, and
-        supported transports. Zero I/O — always instant.
-
-        Returns:
-            JSON string with server, version, schema_version,
-            transports, tools list with manifests, total_tools count.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            capabilities = explorer.describe_capabilities()
-
-            # Collect manifests from all registered tools
-            all_tools_mcp = getattr(mcp, "_tools", {})
-            if not all_tools_mcp:
-                tm = getattr(mcp, "_tool_manager", None)
-                if tm:
-                    all_tools_mcp = getattr(tm, "_tools", {})
-            tools_list = []
-            for name, fn in sorted(all_tools_mcp.items()):
-                manifest = getattr(fn, "__manifest__", None)
-                tools_list.append(
-                    manifest or {"name": name, "version": TOOLS_VERSION, "risk": "READ"}
-                )
-
-            capabilities["version"] = TOOLS_VERSION
-            capabilities["tools"] = tools_list
-            capabilities["total_tools"] = len(tools_list)
-            return _success_response(
-                capabilities, _meta=build_meta("describe_router_capabilities", _start)
-            )
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def restart_interface(
-        interface_name: str,
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Restart a network interface (ifdown + ifup).
-
-        Requires ENABLE_WRITE_OPERATIONS=1 to be set.
-
-        Args:
-            interface_name: Network interface name (e.g., "wan", "lan", "wwan0").
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, interface, action, and command output.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            check_write_enabled()
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            writer = get_writer(explorer.ssh)
-            result = await writer.restart_interface(interface_name)
-            return _success_response(result, _meta=build_meta("restart_interface", _start))
-        except ValidationError as e:
-            return _error_response_extended(
-                "INVALID_PARAM",
-                str(e),
-                False,
-                suggestion="Set ENABLE_WRITE_OPERATIONS=1 to enable write"
-                " tools, or use a valid interface name.",
-            )
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def reload_network(
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Reload the network service (/etc/init.d/network reload).
-
-        Requires ENABLE_WRITE_OPERATIONS=1 to be set.
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, action, and command output.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            check_write_enabled()
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            writer = get_writer(explorer.ssh)
-            result = await writer.reload_network()
-            return _success_response(result, _meta=build_meta("reload_network", _start))
-        except ValidationError as e:
-            return _error_response_extended(
-                "INVALID_PARAM",
-                str(e),
-                False,
-                suggestion="Set ENABLE_WRITE_OPERATIONS=1 to enable write tools.",
-            )
-        except Exception as e:
-            return _error_response(str(e))
-
-    # ------------------------------------------------------------------ #
-    # Feature 1: UCI Write tools
-    # ------------------------------------------------------------------ #
-
-    @mcp.tool()
-    async def uci_set(
-        config: str,
-        section: str,
-        option: str,
-        value: str,
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Set a UCI configuration value on the router.
-
-        Requires ENABLE_WRITE_OPERATIONS=1 to be set.
-        Changes are not permanent until uci_commit is called.
-
-        Args:
-            config: UCI config name (e.g., 'network', 'dhcp', 'wireless').
-            section: Section identifier (e.g., 'wan', '@rule[0]').
-            option: Option name (e.g., 'ipaddr', 'hostname').
-            value: Value to set.
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, config, section, option, value, action.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            check_write_enabled()
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            writer = get_writer(explorer.ssh)
-            result = await writer.uci_set(config, section, option, value)
-            return _success_response(result, _meta=build_meta("uci_set", _start))
-        except ValidationError as e:
-            return _error_response_extended(
-                "INVALID_PARAM",
-                str(e),
-                False,
-                suggestion="Set ENABLE_WRITE_OPERATIONS=1 to enable write tools,"
-                " and use valid config/section/option names.",
-            )
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
-    async def uci_commit(
-        config: str,
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Commit UCI configuration changes to make them permanent.
-
-        Requires ENABLE_WRITE_OPERATIONS=1 to be set.
-
-        Args:
-            config: UCI config name to commit (e.g., 'dhcp', 'network', 'wireless').
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, config, action.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            check_write_enabled()
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            writer = get_writer(explorer.ssh)
-            result = await writer.uci_commit(config)
-            return _success_response(result, _meta=build_meta("uci_commit", _start))
-        except ValidationError as e:
-            return _error_response_extended(
-                "INVALID_PARAM",
-                str(e),
-                False,
-                suggestion="Set ENABLE_WRITE_OPERATIONS=1 to enable write tools.",
-            )
-        except Exception as e:
-            return _error_response(str(e))
-
-    # ------------------------------------------------------------------ #
-    # Feature 2: Reboot device
-    # ------------------------------------------------------------------ #
-
-    @mcp.tool()
-    async def reboot_device(
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Reboot the OpenWRT router.
-
-        Requires ENABLE_WRITE_OPERATIONS=1 to be set.
-        This will disconnect the SSH session. The router will be
-        unreachable for approximately 60 seconds.
-
-        Args:
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, action, note.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            check_write_enabled()
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            writer = get_writer(explorer.ssh)
-            result = await writer.reboot_device()
-            return _success_response(result, _meta=build_meta("reboot_device", _start))
-        except ValidationError as e:
-            return _error_response_extended(
-                "INVALID_PARAM",
-                str(e),
-                False,
-                suggestion="Set ENABLE_WRITE_OPERATIONS=1 to enable write tools.",
-            )
-        except Exception as e:
-            return _error_response(str(e))
-
-    # ------------------------------------------------------------------ #
-    # Feature 3: Standalone diagnostic tools
-    # ------------------------------------------------------------------ #
-
-    @mcp.tool()
     async def ping_host(
-        host: str,
-        count: int = 4,
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Ping a host from the router.
+        host: str, count: int = 4, timeout_seconds: int = settings.ssh_timeout
+    ) -> dict[str, Any]:
+        return await call("ping_host", host, count, timeout_seconds=timeout_seconds)
 
-        Args:
-            host: Hostname or IP to ping (e.g., '8.8.8.8', 'google.com').
-            count: Number of ping packets (1-10, default 4).
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, host, output, reachable.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.ping_host(host, count)
-            return _success_response(result, _meta=build_meta("ping_host", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
     async def traceroute_host(
-        host: str,
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Traceroute to a host from the router.
+        host: str, timeout_seconds: int = settings.ssh_timeout
+    ) -> dict[str, Any]:
+        return await call("traceroute_host", host, timeout_seconds=timeout_seconds)
 
-        Args:
-            host: Hostname or IP to trace (e.g., '8.8.8.8').
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, host, output.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.traceroute_host(host)
-            return _success_response(result, _meta=build_meta("traceroute_host", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    @mcp.tool()
     async def nslookup_host(
         host: str,
         dns_server: str = "8.8.8.8",
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Look up DNS information for a hostname from the router.
+        timeout_seconds: int = settings.ssh_timeout,
+    ) -> dict[str, Any]:
+        return await call("nslookup_host", host, dns_server, timeout_seconds=timeout_seconds)
 
-        Args:
-            host: Hostname to resolve (e.g., 'google.com').
-            dns_server: DNS server to query (default '8.8.8.8').
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
-
-        Returns:
-            JSON string with success, host, resolved, output.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.nslookup_host(host, dns_server)
-            return _success_response(result, _meta=build_meta("nslookup_host", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    # ------------------------------------------------------------------ #
-    # Feature 4: WiFi survey
-    # ------------------------------------------------------------------ #
-
-    @mcp.tool()
     async def wifi_scan(
-        radio: str = "wlan0",
-        timeout_seconds: int = SSH_TIMEOUT,
-    ) -> str:
-        """Scan for neighboring WiFi networks.
+        radio: str = "wlan0", timeout_seconds: int = settings.ssh_timeout
+    ) -> dict[str, Any]:
+        return await call("wifi_scan", radio, timeout_seconds=timeout_seconds)
 
-        Args:
-            radio: Radio interface to scan (default 'wlan0').
-            timeout_seconds: Optional SSH timeout override (default uses SSH_TIMEOUT).
+    async def describe_router_capabilities() -> dict[str, Any]:
+        supported = registry.supported()
+        active = registry.active()
+        return {
+            "success": True,
+            "server": "OpenWRT-Observer",
+            "version": __version__,
+            "schema_version": "2",
+            "transports": ["stdio"],
+            "supported_tools": supported,
+            "active_tools": active,
+            "total_supported": len(supported),
+            "total_active": len(active),
+        }
 
-        Returns:
-            JSON string with success, radio, networks_found, networks list.
-
-        @since v1.2.0
-        """
-        _start = time.monotonic()
-        set_request_id(generate_request_id())
-        try:
-            explorer = get_explorer()
-            explorer.ssh.set_timeout(timeout_seconds)
-            result = await explorer.wifi_scan(radio)
-            return _success_response(result, _meta=build_meta("wifi_scan", _start))
-        except Exception as e:
-            return _error_response(str(e))
-
-    # ------------------------------------------------------------------ #
-
-    # Attach manifests to all tools
-    tool_manifest_map = {
-        "test_router_connection": _make_manifest("test_router_connection", 10000, "moderate"),
-        "get_router_info": _make_manifest("get_router_info"),
-        "get_router_wifi_status": _make_manifest("get_router_wifi_status"),
-        "get_router_dhcp_leases": _make_manifest("get_router_dhcp_leases"),
-        "get_router_firewall_rules": _make_manifest("get_router_firewall_rules"),
-        "read_router_uci_config": _make_manifest("read_router_uci_config"),
-        "list_router_packages": _make_manifest("list_router_packages"),
-        "get_router_logs": _make_manifest("get_router_logs"),
-        "search_router_logs": _make_manifest("search_router_logs", 30000, "slow"),
-        "diagnose_router_connectivity": _make_manifest(
-            "diagnose_router_connectivity", 30000, "slow"
-        ),
-        "get_dhcp_static_leases": _make_manifest("get_dhcp_static_leases"),
-        "search_dhcp_logs": _make_manifest("search_dhcp_logs", 30000, "slow"),
-        "get_device_dhcp_details": _make_manifest("get_device_dhcp_details"),
-        "get_router_context": _make_manifest("get_router_context", 30000, "slow"),
-        "describe_router_capabilities": _make_manifest(
-            "describe_router_capabilities", 3000, "instant"
-        ),
-        "restart_interface": _make_write_manifest("restart_interface", 20000, "moderate"),
-        "reload_network": _make_write_manifest("reload_network", 20000, "moderate"),
-        "uci_set": _make_write_manifest("uci_set", 15000, "moderate"),
-        "uci_commit": _make_write_manifest("uci_commit", 15000, "moderate"),
-        "reboot_device": _make_destructive_manifest("reboot_device", 30000, "slow"),
-        "ping_host": _make_manifest("ping_host", 10000, "fast"),
-        "traceroute_host": _make_manifest("traceroute_host", 30000, "slow"),
-        "nslookup_host": _make_manifest("nslookup_host", 10000, "fast"),
-        "wifi_scan": _make_manifest("wifi_scan", 15000, "moderate"),
+    operations = {
+        "test_router_connection": test_router_connection,
+        "get_router_info": get_router_info,
+        "get_router_wifi_status": get_router_wifi_status,
+        "get_router_dhcp_leases": get_router_dhcp_leases,
+        "get_router_firewall_rules": get_router_firewall_rules,
+        "read_router_uci_config": read_router_uci_config,
+        "list_router_packages": list_router_packages,
+        "get_router_logs": get_router_logs,
+        "search_router_logs": search_router_logs,
+        "diagnose_router_connectivity": diagnose_router_connectivity,
+        "get_dhcp_static_leases": get_dhcp_static_leases,
+        "search_dhcp_logs": search_dhcp_logs,
+        "get_device_dhcp_details": get_device_dhcp_details,
+        "get_router_context": get_router_context,
+        "describe_router_capabilities": describe_router_capabilities,
+        "ping_host": ping_host,
+        "traceroute_host": traceroute_host,
+        "nslookup_host": nslookup_host,
+        "wifi_scan": wifi_scan,
     }
+    return InvocationKernel(
+        registry=registry,
+        operations=operations,
+        target_identity=(
+            f"ssh:{settings.openwrt_user}@{settings.openwrt_host}:"
+            f"{settings.openwrt_port}"
+        ),
+    )
+
+
+def _attach_and_register(mcp: Any, fn: Callable[..., Any], manifest: CapabilityManifest) -> None:
+    risk_prefix = f"[{manifest.risk}]"
+    doc = (fn.__doc__ or fn.__name__.replace("_", " ")).strip()
+    fn.__doc__ = f"{risk_prefix} {doc}"
+    fn.__manifest__ = manifest.as_dict()  # type: ignore[attr-defined]
+    registered = mcp.tool()(fn)
     try:
-        tm = getattr(mcp, "_tool_manager", None)
-        all_tools = getattr(mcp, "_tools", {}) or (getattr(tm, "_tools", {}) if tm else {})
+        registered.__manifest__ = manifest.as_dict()
+    except (AttributeError, TypeError):
+        pass
 
-        # FastMCP 3.x: tools aren't in _tools dict. Use list_tools instead.
-        if not all_tools and hasattr(mcp, "list_tools"):
-            try:
-                ftools: list[Any] = asyncio.run(mcp.list_tools())
-                all_tools = {}
-                for ft in ftools:
-                    name = getattr(ft, "name", None)
-                    if name:
-                        all_tools[name] = ft
-            except Exception:
-                pass
 
-        for name, fn in all_tools.items():
-            if name in tool_manifest_map:
-                fn.__manifest__ = tool_manifest_map[name]
-        _inject_risk_prefixes(all_tools, tool_manifest_map)
-    except Exception:
-        logger.warning("Tool manifest injection failed for some tools", exc_info=True)
+def _public_arguments(values: dict[str, Any]) -> dict[str, Any]:
+    """Remove closure/internal names from wrapper-local argument mappings."""
+    return {key: value for key, value in values.items() if key not in {"kernel"}}
 
-    tool_count = len(all_tools) if "all_tools" in dir() else 0
-    if tool_count == 0:
-        try:
-            tm2 = getattr(mcp, "_tool_manager", None)
-            tool_count = len(
-                getattr(mcp, "_tools", {}) or (getattr(tm2, "_tools", {}) if tm2 else {})
+
+async def _invoke_for_mcp(
+    kernel: InvocationKernel, name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    result = await kernel.invoke(name, arguments)
+    if not result.success:
+        if result.error is None:
+            raise ToolExecutionError(
+                KernelError(code="INTERNAL", message="Unknown tool failure")
             )
-        except Exception:
-            pass
-    logger.info("Registered %d tools", tool_count)
+        raise ToolExecutionError(result.error)
+    return result.as_dict()
+
+
+def register_openwrt_tools(mcp: Any, kernel: InvocationKernel) -> None:
+    """Register active tools; all wrappers delegate to the same kernel."""
+
+    async def test_router_connection(timeout_seconds: int = 30) -> dict[str, Any]:
+        """Test SSH connectivity to the configured router."""
+        return await _invoke_for_mcp(kernel, "test_router_connection", _public_arguments(locals()))
+
+    async def get_router_info(timeout_seconds: int = 30) -> dict[str, Any]:
+        """Fetch router system information."""
+        return await _invoke_for_mcp(kernel, "get_router_info", _public_arguments(locals()))
+
+    async def get_router_wifi_status(timeout_seconds: int = 30) -> dict[str, Any]:
+        """Fetch Wi-Fi interfaces and connected clients."""
+        return await _invoke_for_mcp(kernel, "get_router_wifi_status", _public_arguments(locals()))
+
+    async def get_router_dhcp_leases(timeout_seconds: int = 30) -> dict[str, Any]:
+        """Fetch active DHCP leases."""
+        return await _invoke_for_mcp(kernel, "get_router_dhcp_leases", _public_arguments(locals()))
+
+    async def get_router_firewall_rules(timeout_seconds: int = 30) -> dict[str, Any]:
+        """Fetch bounded firewall rule output."""
+        return await _invoke_for_mcp(
+            kernel, "get_router_firewall_rules", _public_arguments(locals())
+        )
+
+    async def read_router_uci_config(
+        config_name: str, timeout_seconds: int = 30
+    ) -> dict[str, Any]:
+        """Read an allowlisted UCI configuration namespace."""
+        return await _invoke_for_mcp(kernel, "read_router_uci_config", _public_arguments(locals()))
+
+    async def list_router_packages(timeout_seconds: int = 30) -> dict[str, Any]:
+        """List a bounded sample of installed packages."""
+        return await _invoke_for_mcp(kernel, "list_router_packages", _public_arguments(locals()))
+
+    async def get_router_logs(
+        lines: int = 50, filter_level: str = "all", timeout_seconds: int = 30
+    ) -> dict[str, Any]:
+        """Fetch a bounded router log window."""
+        return await _invoke_for_mcp(kernel, "get_router_logs", _public_arguments(locals()))
+
+    async def search_router_logs(
+        search_term: str, max_results: int = 30, timeout_seconds: int = 30
+    ) -> dict[str, Any]:
+        """Search router logs using Python-side filtering."""
+        return await _invoke_for_mcp(kernel, "search_router_logs", _public_arguments(locals()))
+
+    async def diagnose_router_connectivity(
+        timeout_seconds: int = 30,
+    ) -> dict[str, Any]:
+        """Run bounded connectivity diagnostics from the router."""
+        return await _invoke_for_mcp(
+            kernel, "diagnose_router_connectivity", _public_arguments(locals())
+        )
+
+    async def get_dhcp_static_leases(timeout_seconds: int = 30) -> dict[str, Any]:
+        """Fetch static DHCP reservations."""
+        return await _invoke_for_mcp(kernel, "get_dhcp_static_leases", _public_arguments(locals()))
+
+    async def search_dhcp_logs(
+        search_term: str, timeout_seconds: int = 30
+    ) -> dict[str, Any]:
+        """Search DHCP-related router events."""
+        return await _invoke_for_mcp(kernel, "search_dhcp_logs", _public_arguments(locals()))
+
+    async def get_device_dhcp_details(
+        mac_address: str | None = None,
+        ip_address: str | None = None,
+        timeout_seconds: int = 30,
+    ) -> dict[str, Any]:
+        """Fetch lease, reservation, and recent event details for one device."""
+        return await _invoke_for_mcp(kernel, "get_device_dhcp_details", _public_arguments(locals()))
+
+    async def get_router_context(timeout_seconds: int = 30) -> dict[str, Any]:
+        """Fetch a bounded aggregate router context snapshot."""
+        return await _invoke_for_mcp(kernel, "get_router_context", _public_arguments(locals()))
+
+    async def describe_router_capabilities() -> dict[str, Any]:
+        """Describe supported and active catalogs without router I/O."""
+        return await _invoke_for_mcp(kernel, "describe_router_capabilities", {})
+
+    async def ping_host(
+        host: str, count: int = 4, timeout_seconds: int = 30
+    ) -> dict[str, Any]:
+        """Ping a validated host from the router."""
+        return await _invoke_for_mcp(kernel, "ping_host", _public_arguments(locals()))
+
+    async def traceroute_host(
+        host: str, timeout_seconds: int = 30
+    ) -> dict[str, Any]:
+        """Trace a validated host from the router."""
+        return await _invoke_for_mcp(kernel, "traceroute_host", _public_arguments(locals()))
+
+    async def nslookup_host(
+        host: str, dns_server: str = "8.8.8.8", timeout_seconds: int = 30
+    ) -> dict[str, Any]:
+        """Resolve a host through a validated DNS server."""
+        return await _invoke_for_mcp(kernel, "nslookup_host", _public_arguments(locals()))
+
+    async def wifi_scan(
+        radio: str = "wlan0", timeout_seconds: int = 30
+    ) -> dict[str, Any]:
+        """Scan nearby Wi-Fi networks through an allowlisted interface."""
+        return await _invoke_for_mcp(kernel, "wifi_scan", _public_arguments(locals()))
+
+    functions = [
+        test_router_connection,
+        get_router_info,
+        get_router_wifi_status,
+        get_router_dhcp_leases,
+        get_router_firewall_rules,
+        read_router_uci_config,
+        list_router_packages,
+        get_router_logs,
+        search_router_logs,
+        diagnose_router_connectivity,
+        get_dhcp_static_leases,
+        search_dhcp_logs,
+        get_device_dhcp_details,
+        get_router_context,
+        describe_router_capabilities,
+        ping_host,
+        traceroute_host,
+        nslookup_host,
+        wifi_scan,
+    ]
+    for fn in functions:
+        manifest = kernel.registry.get(fn.__name__)
+        if not manifest.active:
+            raise RuntimeError(f"attempted to register inactive capability: {fn.__name__}")
+        _attach_and_register(mcp, fn, manifest)

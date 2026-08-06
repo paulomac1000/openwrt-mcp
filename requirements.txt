@@ -1,5 +1,5 @@
-# OpenWRT MCP Server Runtime Dependencies
-fastmcp>=3.3.1,<4.0.0
-asyncssh>=2.23.0,<3.0.0
-starlette>=1.0.0
-uvicorn>=0.47.0
+# Compatibility input only. Production and CI install from pyproject.toml.
+mcp>=2.0.0,<3
+asyncssh>=2.23,<3
+starlette>=0.50,<2
+uvicorn>=0.48,<1

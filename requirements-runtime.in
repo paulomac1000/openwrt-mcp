@@ -1,0 +1,4 @@
+mcp>=2.0.0,<3
+asyncssh>=2.23,<3
+starlette>=0.50,<2
+uvicorn>=0.48,<1

@@ -1,27 +1,21 @@
-# OpenWRT MCP Server
-# Model Context Protocol server for OpenWRT router management
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim AS runtime
 
-FROM python:3.14-slim
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN useradd --create-home --shell /bin/bash openwrt
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin openwrt \
+    && mkdir -p /app/log /app/keys \
+    && chown -R openwrt:openwrt /app
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY pyproject.toml .
-COPY src/ ./src/
-RUN pip install --no-cache-dir -e .
-
-RUN mkdir -p /app/log && chown -R openwrt:openwrt /app
-
-EXPOSE 9094 9095 9096
+# CI builds and tests this exact wheel before building the image.
+COPY dist/*.whl /tmp/openwrt-mcp.whl
+RUN python -m pip install --no-cache-dir /tmp/openwrt-mcp.whl \
+    && rm /tmp/openwrt-mcp.whl \
+    && python -m pip check
 
 USER openwrt
 CMD ["openwrt-mcp"]
