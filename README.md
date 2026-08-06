@@ -1,123 +1,103 @@
 # OpenWRT MCP
 
-A hardened MCP server for observing and diagnosing one configured OpenWRT router.
+Hardened read-only MCP server for bounded OpenWRT diagnostics.
 
-The active profile exposes **19 read capabilities**. Five historical write or destructive capability names remain in the supported catalog but are intentionally inactive and are not registered as callable MCP tools.
+## Current profile
 
-## Security posture
+- Official MCP Python SDK v2 over stdio.
+- 24 stable names in the supported catalog.
+- 19 active read-only tools exposed through `tools/list`.
+- Five write or destructive capabilities retained as inactive metadata and not registered.
+- One invocation kernel shared by MCP, optional REST, and tests.
+- Target-wide serialization for operations marked `concurrent_safe=false`.
 
-- MCP uses the official Python SDK v2 and stdio transport.
-- Legacy two-endpoint HTTP+SSE is removed.
-- Configuration is validated and frozen before application composition.
-- MCP and the optional loopback REST adapter delegate to one invocation kernel.
-- SSH commands use closed grammars and dedicated argument validators.
-- Shared SSH use is serialized and timeout overrides are task-local.
-- Write execution never reconnects and retries after an ambiguous outcome.
-- Write and destructive capabilities fail closed until principal-bound approval, target authorization, and real-router tests exist.
-- Model-visible results and audit records are sanitized at their respective boundaries.
+## Requirements
 
-See [`docs/openwrt-mcp.md`](docs/openwrt-mcp.md) for architecture and failure behavior and [`docs/migration-assessment.yaml`](docs/migration-assessment.yaml) for adoption evidence and residual risks.
+- Python 3.12–3.14.
+- An OpenWRT router reachable over SSH.
+- An SSH key or password.
+- An enrolled `known_hosts` file in real mode.
 
-## Supported and active tools
+Copy `.env.example` and set at least:
 
-The supported catalog contains 24 stable identifiers. The active MCP catalog contains the following 19 read tools:
-
-- `test_router_connection`
-- `get_router_info`
-- `get_router_wifi_status`
-- `get_router_dhcp_leases`
-- `get_router_firewall_rules`
-- `read_router_uci_config`
-- `list_router_packages`
-- `get_router_logs`
-- `search_router_logs`
-- `diagnose_router_connectivity`
-- `get_dhcp_static_leases`
-- `search_dhcp_logs`
-- `get_device_dhcp_details`
-- `get_router_context`
-- `describe_router_capabilities`
-- `ping_host`
-- `traceroute_host`
-- `nslookup_host`
-- `wifi_scan`
-
-Inactive supported identifiers are `restart_interface`, `reload_network`, `uci_set`, `uci_commit`, and `reboot_device`. They are visible through `describe_router_capabilities` with an explicit inactive reason, but they are not exposed through MCP `tools/list`.
-
-## Deterministic mock mode
-
-Mock mode performs no network I/O and exercises all active capabilities:
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -e ".[dev]"
-OPENWRT_MOCK_MODE=1 PYTHONPATH=src .venv/bin/python scripts/mock_smoke.py
+```env
+OPENWRT_HOST=192.168.1.1
+OPENWRT_USER=root
+OPENWRT_SSH_KEY=/absolute/path/to/openwrt_id_ed25519
+OPENWRT_KNOWN_HOSTS=/absolute/path/to/known_hosts
+MCP_TRANSPORT=stdio
 ```
 
-Run the full local gate:
+Generate the host identity file before first use:
 
 ```bash
-.venv/bin/python scripts/ci.py
+ssh-keyscan -H 192.168.1.1 > known_hosts
 ```
 
-The repository includes explicit skipped TODO tests for host-key enrollment, cancellation on a real router, and a future approved write workflow. Their preconditions and owners are recorded in the migration assessment.
+`OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK=1` is an explicit non-production exception. It emits a warning and is never accepted for dormant write execution.
 
-## Run against a router
-
-Create an SSH key and enroll it on a non-production router. Record the router host key in a dedicated `known_hosts` file.
+## Local development
 
 ```bash
-cp .env.example .env
-# Set OPENWRT_HOST, OPENWRT_SSH_KEY, and OPENWRT_KNOWN_HOSTS.
-set -a; . ./.env; set +a
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[dev]"
+OPENWRT_MOCK_MODE=1 python scripts/mock_smoke.py
+python -m pytest
+```
+
+Start the MCP server:
+
+```bash
 openwrt-mcp
 ```
 
-The MCP transport is stdio. Diagnostics are written to stderr; stdout is reserved for protocol messages.
+The hardened MCP transport is stdio. Legacy HTTP plus SSE has been removed.
 
-## Optional loopback REST adapter
+## Optional REST adapter
 
-The REST adapter is disabled by default. Enable it only for a local process boundary:
+REST is disabled by default, binds only to `127.0.0.1`, and uses the same invocation kernel as MCP. A bearer token is mandatory whenever REST is enabled:
 
-```bash
-ENABLE_REST_API=true \
-MCP_REST_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')" \
-openwrt-mcp
+```env
+ENABLE_REST_API=true
+MCP_REST_AUTH_TOKEN=replace-with-a-long-random-token
 ```
 
-It binds to `127.0.0.1`, bounds request bodies, rejects invalid JSON, uses restrictive configured origins, and invokes the same kernel as MCP. It is not a remote MCP transport.
+Requests without a valid `Authorization: Bearer ...` header are rejected. Request bodies have a configured byte limit, invalid JSON is rejected, and wildcard origins are not accepted.
 
-## Configuration
+## Deadlines and concurrency
 
-All settings are loaded once from environment variables. See [`.env.example`](.env.example). Important settings include:
+Public MCP tools do not accept a timeout override. Each capability manifest owns its deadline. The internal SSH command timeout is capped by that deadline. Non-concurrent-safe operations are serialized for the whole configured router target unless an explicit reviewed concurrency group is declared.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `OPENWRT_HOST` | `192.168.1.1` | Configured router selector |
-| `OPENWRT_PORT` | `22` | SSH port |
-| `OPENWRT_USER` | `root` | SSH user |
-| `OPENWRT_SSH_KEY` | `/app/keys/openwrt_id_ed25519` | Private key path |
-| `OPENWRT_KNOWN_HOSTS` | unset | Host identity database; strongly recommended |
-| `SSH_TIMEOUT` | `30` | Per-call default deadline in seconds |
-| `MCP_TRANSPORT` | `stdio` | Only accepted MCP transport in this profile |
-| `OPENWRT_MOCK_MODE` | `false` | Deterministic no-I/O adapter |
-| `ENABLE_REST_API` | `false` | Start the loopback convenience adapter |
-| `MCP_REST_AUTH_TOKEN` | unset | Optional local REST bearer token |
-| `MCP_MAX_REQUEST_BODY_BYTES` | `65536` | REST request bound |
+## Response compatibility
 
-## Standards lock
+The active tools preserve historical read DTOs, including connectivity summaries, router-context aggregate fields, `reachable` on ping, `resolved` on DNS lookup, parsed Wi-Fi scan networks, and stable DHCP event values.
 
-Adoption is pinned in [`standards-lock.yaml`](standards-lock.yaml) to `paulomac1000/ai-skills` revision `661ff01a5e70d58d6c94a12545b24647e52063ed`, skill version `1.2.0`, for:
+Controlled tool failures return sanitized `CallToolResult` content with `is_error=true`. Unexpected SDK or protocol failures remain protocol-level errors.
 
-- MCP Server Architect
-- AFDS Document Writer
-- AGENTS.md Architect
-- CI/CD Architect
+## CI and standards evidence
 
-Links to a mutable `main` branch are not used as acceptance evidence.
+`standards-lock.yaml` pins `paulomac1000/ai-skills` to revision `661ff01a5e70d58d6c94a12545b24647e52063ed`.
 
-## Verification scope
+Hosted CI:
 
-The local gate compiles production and test code, validates the immutable standards lock and governed documentation, executes unit and mock end-to-end tests, and runs all active capabilities against deterministic data.
+1. checks out the exact candidate SHA;
+2. checks out the trusted `ai-skills` revision outside the candidate tree;
+3. runs the trusted AFDS and workflow-policy validators;
+4. generates hashed runtime and development locks;
+5. runs Ruff, formatting, mypy strict, Bandit, pip-audit, tests, and branch coverage;
+6. builds and smokes the exact wheel through the official MCP client;
+7. builds and smokes a container from the tested wheel and runtime lock.
 
-Hosted CI additionally runs Ruff, mypy, Bandit, branch coverage, builds a wheel, installs and tests that exact wheel through the official MCP client, builds a non-root container from the same wheel, and smokes the exact image. Real-router evidence remains a separate owned task; mock success is not represented as production integration evidence.
+The generated transitive lock files are retained as CI evidence. Committing reviewed generated locks remains follow-up work for cross-run reproducibility.
+
+## Documentation
+
+- `AGENTS.md` — repository operating instructions.
+- `docs/openwrt-mcp.md` — architecture and operational contract.
+- `docs/migration-assessment.yaml` — evidence, residual risks, and real-system TODOs.
+- `standards-lock.yaml` — immutable standards source.
+
+## Safety boundary
+
+The project is currently read-only. Do not activate write tools until authenticated authorization, principal-bound expiring approval, verification, compensation, and isolated-router tests are implemented and reviewed.
