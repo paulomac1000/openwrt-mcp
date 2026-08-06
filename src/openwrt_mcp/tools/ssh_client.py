@@ -25,18 +25,18 @@ class SSHConnection:
         self._connect_lock = asyncio.Lock()
         self._command_lock = asyncio.Lock()
         self._cancel_requested: contextvars.ContextVar[bool] = contextvars.ContextVar(
-            f"ssh_cancel_{id(self)}", default=False
+            f"ssh_cancel_{id(self)}",
+            default=False,
         )
-        self._timeout_override: contextvars.ContextVar[int | None] = contextvars.ContextVar(
-            f"ssh_timeout_{id(self)}", default=None
+        self._timeout_override: contextvars.ContextVar[int | None] = (
+            contextvars.ContextVar(
+                f"ssh_timeout_{id(self)}",
+                default=None,
+            )
         )
 
     def set_timeout(self, seconds: int) -> None:
-        """Set a task-local timeout for legacy wrappers.
-
-        The value is isolated by ``ContextVar`` and therefore cannot leak across
-        overlapping asyncio tasks. New code should use ``timeout_scope``.
-        """
+        """Set a task-local timeout for compatibility with internal callers."""
         if not 1 <= seconds <= 300:
             raise ValueError("timeout must be between 1 and 300 seconds")
         self._timeout_override.set(seconds)
@@ -54,9 +54,7 @@ class SSHConnection:
     def cancel(self) -> None:
         """Request cancellation in the current task context.
 
-        Cross-task cancellation must use ``Task.cancel()``; this compatibility
-        method is intentionally context-local to prevent one request cancelling
-        another request.
+        Cross-task cancellation must use ``Task.cancel()``.
         """
         self._cancel_requested.set(True)
 
@@ -67,13 +65,20 @@ class SSHConnection:
             if self._connection is not None:
                 return True
 
+            if self.settings.openwrt_known_hosts is not None:
+                known_hosts: str | None = str(self.settings.openwrt_known_hosts)
+            elif self.settings.insecure_skip_host_key_check:
+                logger.warning("SSH host-key verification is explicitly disabled")
+                known_hosts = None
+            else:
+                logger.error("OPENWRT_KNOWN_HOSTS is required")
+                return False
+
             kwargs: dict[str, Any] = {
                 "host": self.settings.openwrt_host,
                 "port": self.settings.openwrt_port,
                 "username": self.settings.openwrt_user,
-                "known_hosts": str(self.settings.openwrt_known_hosts)
-                if self.settings.openwrt_known_hosts
-                else None,
+                "known_hosts": known_hosts,
                 "connect_timeout": self.settings.ssh_timeout,
                 "login_timeout": self.settings.ssh_timeout,
             }
@@ -94,25 +99,39 @@ class SSHConnection:
                 return False
 
     async def execute(
-        self, command: str, *, timeout_seconds: int | None = None
+        self,
+        command: str,
+        *,
+        timeout_seconds: int | None = None,
     ) -> tuple[str, str, int]:
         valid, message = SecurityValidator.validate_command(command)
         if not valid:
             return "", f"Security denial: {message}", 1
         return await self._execute_once(
-            command.strip(), timeout_seconds=timeout_seconds, allow_reconnect=True
+            command.strip(),
+            timeout_seconds=timeout_seconds,
+            allow_reconnect=True,
         )
 
     async def execute_write(
-        self, command: str, *, timeout_seconds: int | None = None
+        self,
+        command: str,
+        *,
+        timeout_seconds: int | None = None,
     ) -> tuple[str, str, int]:
         valid, message = SecurityValidator.validate_write_command(command)
         if not valid:
             return "", f"Security denial: {message}", 1
         if self.settings.openwrt_known_hosts is None:
-            return "", "Security denial: write operations require OPENWRT_KNOWN_HOSTS", 1
+            return (
+                "",
+                "Security denial: write operations require OPENWRT_KNOWN_HOSTS",
+                1,
+            )
         return await self._execute_once(
-            command.strip(), timeout_seconds=timeout_seconds, allow_reconnect=False
+            command.strip(),
+            timeout_seconds=timeout_seconds,
+            allow_reconnect=False,
         )
 
     async def _execute_once(
@@ -124,10 +143,13 @@ class SSHConnection:
     ) -> tuple[str, str, int]:
         import asyncssh
 
-        timeout = timeout_seconds or self._timeout_override.get() or self.settings.ssh_timeout
+        timeout = (
+            timeout_seconds
+            or self._timeout_override.get()
+            or self.settings.ssh_timeout
+        )
         if not 1 <= timeout <= 300:
             return "", "Invalid timeout", 1
-
         if self._cancel_requested.get():
             self._cancel_requested.set(False)
             return "", "Operation cancelled", 130
@@ -139,29 +161,56 @@ class SSHConnection:
                 self._log_audit(command)
             try:
                 result = await self._connection.run(command, timeout=timeout)
-                return str(result.stdout), str(result.stderr), int(result.exit_status)
+                return (
+                    str(result.stdout),
+                    str(result.stderr),
+                    int(result.exit_status),
+                )
             except asyncio.CancelledError:
                 raise
-            except (asyncssh.ConnectionLost, asyncssh.DisconnectError, OSError) as exc:
+            except (
+                asyncssh.ConnectionLost,
+                asyncssh.DisconnectError,
+                OSError,
+            ) as exc:
                 self._connection = None
                 if not allow_reconnect:
-                    return "", f"AMBIGUOUS_OUTCOME: connection lost during write: {exc}", 125
-                if await self.connect():
-                    try:
-                        result = await self._connection.run(command, timeout=timeout)
-                        return str(result.stdout), str(result.stderr), int(result.exit_status)
-                    except Exception as retry_exc:
-                        return "", f"Read failed after reconnect: {retry_exc}", 1
-                return "", f"Connection lost: {exc}", 1
+                    return (
+                        "",
+                        f"AMBIGUOUS_OUTCOME: connection lost during write: {exc}",
+                        125,
+                    )
+                return await self._retry_read_after_disconnect(command, timeout, exc)
             except TimeoutError:
                 return "", f"Timeout after {timeout}s", 124
             except Exception as exc:
                 return "", f"Execution error: {exc}", 1
 
+    async def _retry_read_after_disconnect(
+        self,
+        command: str,
+        timeout: int,
+        original_error: Exception,
+    ) -> tuple[str, str, int]:
+        if not await self.connect():
+            return "", f"Connection lost: {original_error}", 1
+        try:
+            result = await self._connection.run(command, timeout=timeout)
+            return (
+                str(result.stdout),
+                str(result.stderr),
+                int(result.exit_status),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as retry_error:
+            return "", f"Read failed after reconnect: {retry_error}", 1
+
     def _log_audit(self, command: str) -> None:
         entry = (
             f"{datetime.now(UTC).isoformat()} | {get_request_id()} | "
-            f"{self.settings.openwrt_user}@{self.settings.openwrt_host} | {command}\n"
+            f"{self.settings.openwrt_user}@{self.settings.openwrt_host} | "
+            f"{command}\n"
         )
         try:
             path = self.settings.audit_log_file

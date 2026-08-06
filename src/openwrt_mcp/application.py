@@ -32,6 +32,7 @@ class CapabilityManifest:
     reversible: bool
     active: bool = True
     inactive_reason: str | None = None
+    concurrency_group: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +51,7 @@ class CapabilityManifest:
             "reversible": self.reversible,
             "active": self.active,
             "inactive_reason": self.inactive_reason,
+            "concurrency_group": self.concurrency_group,
         }
 
 
@@ -128,8 +130,6 @@ class ToolExecutionError(RuntimeError):
 
 class CapabilityRegistry:
     def __init__(self, manifests: dict[str, CapabilityManifest]) -> None:
-        if len(manifests) != len(set(manifests)):
-            raise ValueError("duplicate capability manifest")
         self._manifests = dict(manifests)
 
     def get(self, name: str) -> CapabilityManifest:
@@ -217,13 +217,16 @@ class InvocationKernel:
             deadline_seconds = max(0.001, manifest.timeout_ms / 1000)
             lock: asyncio.Lock | None = None
             if not manifest.concurrent_safe:
-                lock = await self._lock_for(f"{self._target_identity}:{name}")
+                # Default to whole-target serialization. A future multi-channel adapter may
+                # opt into a narrower reviewed concurrency group explicitly.
+                group = manifest.concurrency_group or "target"
+                lock = await self._lock_for(f"{self._target_identity}:{group}")
 
             try:
-                if lock is None:
-                    result = await asyncio.wait_for(operation(**arguments), deadline_seconds)
-                else:
-                    async with asyncio.timeout(deadline_seconds):
+                async with asyncio.timeout(deadline_seconds):
+                    if lock is None:
+                        result = await operation(**arguments)
+                    else:
                         async with lock:
                             result = await operation(**arguments)
                 meta = self._meta(name, started, manifest)
@@ -233,9 +236,7 @@ class InvocationKernel:
                         return KernelResult.failed(
                             str(error.get("code", "UPSTREAM_FAILURE")),
                             str(error.get("message", "Operation failed")),
-                            retryable=bool(
-                                error.get("retryable", False) and manifest.retryable
-                            ),
+                            retryable=bool(error.get("retryable", False) and manifest.retryable),
                             suggestion=error.get("suggestion"),
                             meta=meta,
                         )
@@ -259,7 +260,6 @@ class InvocationKernel:
                     meta=self._meta(name, started, manifest),
                 )
             except Exception:
-                # Do not expose arbitrary exception text to a model or remote client.
                 return KernelResult.failed(
                     "INTERNAL",
                     "Internal server error",

@@ -24,7 +24,7 @@ async def main() -> int:
                 raise RuntimeError(f"unexpected active catalog: {sorted(names)}")
             result = await client.call_tool("get_router_info", {})
             structured = result.structured_content or {}
-            if structured.get("success") is not True:
+            if result.is_error or structured.get("success") is not True:
                 raise RuntimeError(f"unexpected result: {structured}")
         print("official MCP client artifact smoke passed")
         return 0

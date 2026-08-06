@@ -41,7 +41,7 @@ class MockOpenWRTExplorer:
             "openwrt_version": "23.05-mock",
             "kernel": "6.6-mock",
             "uptime_seconds": 86_400,
-            "uptime": "1 day, 0:00:00",
+            "uptime": "1 days, 00:00:00",
             "memory_total_bytes": 268_435_456,
             "memory_free_bytes": 134_217_728,
             "memory_used_percent": 50.0,
@@ -60,10 +60,15 @@ class MockOpenWRTExplorer:
                     "ifname": "wlan0",
                     "clients_count": 1,
                     "clients": [
-                        {"mac": "02:00:00:00:00:01", "signal": -45, "idle": 12}
+                        {
+                            "mac": "02:00:00:00:00:01",
+                            "signal": -45,
+                            "idle": 12,
+                        }
                     ],
                 }
             ],
+            "note": None,
         }
 
     async def list_dhcp_leases(self) -> dict[str, Any]:
@@ -106,26 +111,49 @@ class MockOpenWRTExplorer:
             ],
         }
 
-    async def get_router_logs(self, lines: int, filter_level: str) -> dict[str, Any]:
+    async def get_router_logs(
+        self,
+        lines: int,
+        filter_level: str,
+    ) -> dict[str, Any]:
         return {
             "success": True,
             "lines_count": 1,
             "logs": f"mock log line ({filter_level}, requested={lines})",
         }
 
-    async def search_router_logs(self, search_term: str, max_results: int) -> dict[str, Any]:
+    async def search_router_logs(
+        self,
+        search_term: str,
+        max_results: int,
+    ) -> dict[str, Any]:
         return {
             "success": True,
             "search_term": search_term,
             "results_count": 1,
-            "results": f"mock result for {search_term}",
+            "results": f"mock result for {search_term}; max={max_results}",
         }
 
     async def diagnose_router_connectivity(self) -> dict[str, Any]:
+        tests = {
+            "dns_google": {"success": True, "output": "mock"},
+            "internet_dns": {"success": True, "output": "mock"},
+            "gateway": {
+                "success": True,
+                "gateway_ip": "192.0.2.1",
+                "output": "mock",
+            },
+            "local_dns": {"success": True, "output": "mock"},
+        }
         return {
             "success": True,
-            "tests": {"internet_dns": {"success": True}},
-            "summary": {"passed": 1, "failed": 0, "total": 1, "health": "excellent"},
+            "tests": tests,
+            "summary": {
+                "passed": 4,
+                "failed": 0,
+                "total": 4,
+                "health": "excellent",
+            },
         }
 
     async def get_dhcp_static_leases(self) -> dict[str, Any]:
@@ -135,12 +163,20 @@ class MockOpenWRTExplorer:
         return {
             "success": True,
             "search_term": search_term,
-            "events_found": 0,
-            "events": [],
+            "events_found": 1,
+            "events": [
+                {
+                    "raw_log": f"DHCPACK for {search_term}",
+                    "event_type": "ack",
+                    "contains_search_term": True,
+                }
+            ],
         }
 
     async def get_device_dhcp_details(
-        self, mac_address: str | None, ip_address: str | None
+        self,
+        mac_address: str | None,
+        ip_address: str | None,
     ) -> dict[str, Any]:
         return {
             "success": True,
@@ -150,6 +186,7 @@ class MockOpenWRTExplorer:
             "has_static_reservation": False,
             "is_currently_connected": False,
             "recent_log_events": [],
+            "note": "DHCP logs require 'log_dhcp' enabled in dnsmasq configuration.",
         }
 
     async def get_router_context(self) -> dict[str, Any]:
@@ -158,26 +195,54 @@ class MockOpenWRTExplorer:
             "device_id": "mock-router",
             "model": "OpenWRT Mock Router",
             "uptime_seconds": 86_400,
+            "schema_version": "1.0",
+            "memory_used_percent": 50.0,
+            "openwrt_version": "23.05-mock",
+            "kernel": "6.6-mock",
+            "cpu_load_1min": 0.1,
+            "interfaces_count": 1,
+            "wifi_clients_total": 1,
+            "wifi_interfaces": [
+                {"ssid": "MockNetwork", "mode": "ap", "clients": 1}
+            ],
+            "dhcp_leases_count": 1,
+            "connectivity_health": "excellent",
+            "internet_reachable": True,
             "subsections": {
-                "system": {"success": True},
-                "wifi": {"success": True},
-                "dhcp": {"success": True},
-                "connectivity": {"success": True},
+                "system": {"success": True, "error": None},
+                "cpu": {"success": True},
+                "wifi": {"success": True, "error": None},
+                "dhcp": {"success": True, "error": None},
+                "connectivity": {"success": True, "error": None},
             },
+            "partial": False,
         }
 
     async def ping_host(self, host: str, count: int) -> dict[str, Any]:
-        return {"success": True, "host": host, "count": count, "reachable": True}
-
-    async def traceroute_host(self, host: str) -> dict[str, Any]:
-        return {"success": True, "host": host, "output": "1 192.0.2.1 1.0 ms"}
-
-    async def nslookup_host(self, host: str, dns_server: str) -> dict[str, Any]:
         return {
             "success": True,
             "host": host,
-            "dns_server": dns_server,
-            "resolved": ["192.0.2.200"],
+            "output": f"mock ping count={count}",
+            "reachable": True,
+        }
+
+    async def traceroute_host(self, host: str) -> dict[str, Any]:
+        return {
+            "success": True,
+            "host": host,
+            "output": "1 192.0.2.1 1.0 ms",
+        }
+
+    async def nslookup_host(
+        self,
+        host: str,
+        dns_server: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": True,
+            "host": host,
+            "resolved": True,
+            "output": f"Name: {host}\nAddress: 192.0.2.200\nServer: {dns_server}",
         }
 
     async def wifi_scan(self, radio: str) -> dict[str, Any]:
@@ -185,5 +250,11 @@ class MockOpenWRTExplorer:
             "success": True,
             "radio": radio,
             "networks_found": 1,
-            "networks": [{"ssid": "MockNeighbor", "channel": 6, "signal": -65}],
+            "networks": [
+                {
+                    "ssid": "MockNeighbor",
+                    "channel": "6",
+                    "signal": "-65 dBm",
+                }
+            ],
         }

@@ -1,4 +1,5 @@
-mcp>=2.0.0,<3
-asyncssh>=2.23,<3
-starlette>=0.50,<2
-uvicorn>=0.48,<1
+# Direct runtime dependencies; exact transitive locks are generated and enforced in CI.
+mcp==2.0.0b2
+asyncssh==2.24.0
+starlette==1.3.1
+uvicorn==0.51.0

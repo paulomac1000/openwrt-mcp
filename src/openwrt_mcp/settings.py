@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 
-
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
@@ -47,6 +46,7 @@ class Settings:
     allowed_origins: tuple[str, ...]
     mcp_transport: str
     mock_mode: bool
+    insecure_skip_host_key_check: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -74,6 +74,21 @@ class Settings:
                 "Streamable HTTP requires the pending authenticated transport adapter."
             )
 
+        mock_mode = _bool_env("OPENWRT_MOCK_MODE", False)
+        insecure_host_key = _bool_env("OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK", False)
+        known_hosts = Path(known_hosts_raw) if known_hosts_raw else None
+        if not mock_mode and known_hosts is None and not insecure_host_key:
+            raise ValueError(
+                "OPENWRT_KNOWN_HOSTS is required outside mock mode; "
+                "set OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK=1 only for an explicit "
+                "non-production exception"
+            )
+
+        enable_rest = _bool_env("ENABLE_REST_API", False)
+        rest_token = os.getenv("MCP_REST_AUTH_TOKEN") or None
+        if enable_rest and not rest_token:
+            raise ValueError("MCP_REST_AUTH_TOKEN is required when REST is enabled")
+
         return cls(
             openwrt_host=host,
             openwrt_port=_int_env("OPENWRT_PORT", 22, minimum=1, maximum=65535),
@@ -82,21 +97,22 @@ class Settings:
                 os.getenv("OPENWRT_SSH_KEY", "/app/keys/openwrt_id_ed25519")
             ),
             openwrt_password=password,
-            openwrt_known_hosts=Path(known_hosts_raw) if known_hosts_raw else None,
+            openwrt_known_hosts=known_hosts,
+            insecure_skip_host_key_check=insecure_host_key,
             ssh_timeout=_int_env("SSH_TIMEOUT", 30, minimum=1, maximum=300),
             health_port=_int_env("HEALTH_PORT", 9094, minimum=1, maximum=65535),
             rest_api_port=_int_env("REST_API_PORT", 9096, minimum=1, maximum=65535),
-            enable_rest_api=_bool_env("ENABLE_REST_API", False),
+            enable_rest_api=enable_rest,
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
             enable_audit_logging=_bool_env("ENABLE_AUDIT_LOGGING", True),
             audit_log_file=Path(os.getenv("AUDIT_LOG_FILE", "/app/log/openwrt_mcp.log")),
-            rest_auth_token=os.getenv("MCP_REST_AUTH_TOKEN") or None,
+            rest_auth_token=rest_token,
             max_request_body_bytes=_int_env(
                 "MCP_MAX_REQUEST_BODY_BYTES", 65_536, minimum=1_024, maximum=1_048_576
             ),
             allowed_origins=origins,
             mcp_transport=transport,
-            mock_mode=_bool_env("OPENWRT_MOCK_MODE", False),
+            mock_mode=mock_mode,
         )
 
 
@@ -105,7 +121,6 @@ _snapshot_lock = Lock()
 
 
 def load_settings(*, force: bool = False) -> Settings:
-    """Load and freeze one process settings snapshot."""
     global _snapshot
     with _snapshot_lock:
         if _snapshot is None or force:
@@ -114,12 +129,10 @@ def load_settings(*, force: bool = False) -> Settings:
 
 
 def get_settings() -> Settings:
-    """Return the process settings snapshot, loading it lazily for compatibility."""
     return load_settings()
 
 
 def reset_settings_for_tests() -> None:
-    """Reset the process snapshot. Intended only for isolated tests."""
     global _snapshot
     with _snapshot_lock:
         _snapshot = None
