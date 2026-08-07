@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Candidate-tree workflow policy diagnostics; not independent approval."""
+
 from __future__ import annotations
 
 import re

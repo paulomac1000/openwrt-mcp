@@ -222,9 +222,7 @@ class OpenWRTExplorer:
         config = SecurityValidator.validate_uci_config(config_name)
         if config not in _ALLOWED_UCI_CONFIGS:
             allowed = ", ".join(sorted(_ALLOWED_UCI_CONFIGS))
-            raise ValidationError(
-                f"Configuration {config!r} not supported. Allowed: {allowed}"
-            )
+            raise ValidationError(f"Configuration {config!r} not supported. Allowed: {allowed}")
         raw, error, code = await self._run(f"uci show {config}")
         if code != 0:
             return {
@@ -293,11 +291,7 @@ class OpenWRTExplorer:
         raw, error, code = await self._run("logread -l 500")
         if code != 0:
             return {"success": False, "error": error or "Failed to read logs"}
-        matches = [
-            line
-            for line in raw.splitlines()
-            if search_term.casefold() in line.casefold()
-        ]
+        matches = [line for line in raw.splitlines() if search_term.casefold() in line.casefold()]
         bounded = min(max(int(max_results), 1), 100)
         return {
             "success": True,
@@ -315,9 +309,7 @@ class OpenWRTExplorer:
             "output": (stdout or stderr)[:200],
         }
 
-        stdout, stderr, code = await self._run(
-            "nslookup cloudflare.com 8.8.8.8"
-        )
+        stdout, stderr, code = await self._run("nslookup cloudflare.com 8.8.8.8")
         tests["internet_dns"] = {
             "success": code == 0 and ("Address" in stdout or "Name:" in stdout),
             "output": (stdout or stderr)[:200],
@@ -326,9 +318,7 @@ class OpenWRTExplorer:
         route_output, _, _ = await self._run("ip route show")
         gateway = self._default_gateway(route_output)
         if gateway:
-            stdout, stderr, code = await self._run(
-                f"ping -c 2 -W 1 {gateway}"
-            )
+            stdout, stderr, code = await self._run(f"ping -c 2 -W 1 {gateway}")
             tests["gateway"] = {
                 "success": code == 0,
                 "gateway_ip": gateway,
@@ -340,9 +330,7 @@ class OpenWRTExplorer:
                 "error": "No default gateway found in routing table",
             }
 
-        stdout, stderr, code = await self._run(
-            "nslookup openwrt.lan 127.0.0.1"
-        )
+        stdout, stderr, code = await self._run("nslookup openwrt.lan 127.0.0.1")
         tests["local_dns"] = {
             "success": code == 0,
             "output": (stdout or stderr)[:200],
@@ -512,9 +500,7 @@ class OpenWRTExplorer:
         if wifi.get("success"):
             interfaces = wifi.get("interfaces", [])
             result["interfaces_count"] = wifi.get("interfaces_count", 0)
-            result["wifi_clients_total"] = sum(
-                item.get("clients_count", 0) for item in interfaces
-            )
+            result["wifi_clients_total"] = sum(item.get("clients_count", 0) for item in interfaces)
             result["wifi_interfaces"] = [
                 {
                     "ssid": item.get("ssid"),
@@ -539,21 +525,16 @@ class OpenWRTExplorer:
             result["internet_reachable"] = bool(
                 connectivity.get("tests", {}).get("dns_google", {}).get("success")
             )
-        result["subsections"]["connectivity"] = self._subsection_status(
-            connectivity
-        )
+        result["subsections"]["connectivity"] = self._subsection_status(connectivity)
         result["partial"] = not all(
-            section.get("success", False)
-            for section in result["subsections"].values()
+            section.get("success", False) for section in result["subsections"].values()
         )
         return result
 
     async def ping_host(self, host: str, count: int = 4) -> dict[str, Any]:
         host = self._validate_host(host)
         bounded = min(max(int(count), 1), 10)
-        stdout, stderr, code = await self._run(
-            f"ping -c {bounded} -W 2 {host}"
-        )
+        stdout, stderr, code = await self._run(f"ping -c {bounded} -W 2 {host}")
         return {
             "success": code == 0,
             "host": host,

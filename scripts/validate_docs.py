@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate the repository's governed Markdown documents."""
+
 from __future__ import annotations
 
 import argparse

@@ -60,6 +60,7 @@ def test_read_validator_remains_allowlist_only() -> None:
     assert SecurityValidator.validate_command("ubus call system board")[0] is True
     assert SecurityValidator.validate_command("cat /etc/shadow")[0] is False
 
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -73,7 +74,6 @@ def test_read_validator_remains_allowlist_only() -> None:
 def test_read_command_rejects_shell_syntax(command: str) -> None:
     allowed, _ = SecurityValidator.validate_command(command)
     assert allowed is False
-
 
 
 @pytest.mark.parametrize(

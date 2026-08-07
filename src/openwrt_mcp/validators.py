@@ -85,9 +85,7 @@ class SecurityValidator:
         return value
 
     @classmethod
-    def build_uci_set_command(
-        cls, config: str, section: str, option: str, value: str
-    ) -> str:
+    def build_uci_set_command(cls, config: str, section: str, option: str, value: str) -> str:
         config = cls.validate_uci_config(config)
         section = cls.validate_uci_identifier(section, field="section")
         option = cls.validate_uci_identifier(option, field="option")

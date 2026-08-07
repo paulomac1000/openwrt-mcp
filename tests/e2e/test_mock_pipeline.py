@@ -13,6 +13,7 @@ class FakeMCP:
         def decorator(fn):
             self.tools[fn.__name__] = fn
             return fn
+
         return decorator
 
 

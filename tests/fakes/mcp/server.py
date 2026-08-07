@@ -11,6 +11,7 @@ class MCPServer:
         def decorator(fn: Any) -> Any:
             self.tools[fn.__name__] = fn
             return fn
+
         return decorator
 
     def run(self, *, transport: str) -> None:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate the immutable ai-skills standards reference."""
+
 from __future__ import annotations
 
 import re

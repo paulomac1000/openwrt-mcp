@@ -99,9 +99,7 @@ async def test_different_tools_are_serialized_for_same_target() -> None:
         return {"success": True}
 
     kernel = InvocationKernel(
-        registry=CapabilityRegistry(
-            {"first": manifest("first"), "second": manifest("second")}
-        ),
+        registry=CapabilityRegistry({"first": manifest("first"), "second": manifest("second")}),
         operations={"first": first, "second": second},
         target_identity="router-a",
     )
@@ -166,9 +164,7 @@ async def test_kernel_rejects_missing_unknown_wrong_type_and_range() -> None:
         }
     )
     kernel = InvocationKernel(
-        registry=CapabilityRegistry(
-            {"ping": manifest("ping", input_schema=schema)}
-        ),
+        registry=CapabilityRegistry({"ping": manifest("ping", input_schema=schema)}),
         operations={"ping": operation},
         target_identity="router",
     )
@@ -222,9 +218,7 @@ async def test_all_active_mock_contracts() -> None:
         "read_router_uci_config": {"config_name": "network"},
         "search_router_logs": {"search_term": "mock"},
         "search_dhcp_logs": {"search_term": "mock"},
-        "get_device_dhcp_details": {
-            "mac_address": "02:00:00:00:00:01"
-        },
+        "get_device_dhcp_details": {"mac_address": "02:00:00:00:00:01"},
         "ping_host": {"host": "example.com"},
         "traceroute_host": {"host": "example.com"},
         "nslookup_host": {"host": "example.com"},

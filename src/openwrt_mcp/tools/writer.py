@@ -73,9 +73,7 @@ class OpenWRTWriter:
             else {"success": False, "error": error}
         )
 
-    async def reload_network(
-        self, *, timeout_seconds: int | None = None
-    ) -> dict[str, Any]:
+    async def reload_network(self, *, timeout_seconds: int | None = None) -> dict[str, Any]:
         _, error, code = await self.ssh.execute_write(
             "/etc/init.d/network reload", timeout_seconds=timeout_seconds
         )
@@ -85,9 +83,7 @@ class OpenWRTWriter:
             else {"success": False, "error": error}
         )
 
-    async def reboot_device(
-        self, *, timeout_seconds: int | None = None
-    ) -> dict[str, Any]:
+    async def reboot_device(self, *, timeout_seconds: int | None = None) -> dict[str, Any]:
         _, error, code = await self.ssh.execute_write(
             "ubus call system reboot", timeout_seconds=timeout_seconds
         )

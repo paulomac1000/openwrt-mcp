@@ -147,9 +147,7 @@ async def test_audit_log_redacts_secret_and_ip(
     install_asyncssh(monkeypatch, connection)
     client = SSHConnection(settings)
     await client.execute_write("uci set wireless.radio0.key=192.0.2.123")
-    audit = await asyncio.to_thread(
-        Path(settings.audit_log_file).read_text, encoding="utf-8"
-    )
+    audit = await asyncio.to_thread(Path(settings.audit_log_file).read_text, encoding="utf-8")
     assert "192.0.2.123" not in audit
     assert "<REDACTED>" in audit
 

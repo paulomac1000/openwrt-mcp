@@ -202,9 +202,7 @@ class MockOpenWRTExplorer:
             "cpu_load_1min": 0.1,
             "interfaces_count": 1,
             "wifi_clients_total": 1,
-            "wifi_interfaces": [
-                {"ssid": "MockNetwork", "mode": "ap", "clients": 1}
-            ],
+            "wifi_interfaces": [{"ssid": "MockNetwork", "mode": "ap", "clients": 1}],
             "dhcp_leases_count": 1,
             "connectivity_health": "excellent",
             "internet_reachable": True,

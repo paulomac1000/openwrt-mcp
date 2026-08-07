@@ -92,9 +92,7 @@ def _inactive_write_manifest(
 
 def build_manifest_registry() -> CapabilityRegistry:
     manifests = {
-        "test_router_connection": _read_manifest(
-            "test_router_connection", timeout_ms=10_000
-        ),
+        "test_router_connection": _read_manifest("test_router_connection", timeout_ms=10_000),
         "get_router_info": _read_manifest("get_router_info"),
         "get_router_wifi_status": _read_manifest(
             "get_router_wifi_status", confidentiality="personal"
@@ -126,9 +124,7 @@ def build_manifest_registry() -> CapabilityRegistry:
             timeout_ms=30_000,
             input_schema=_schema(
                 search_term=_STR_REQUIRED(128),
-                max_results=InputField(
-                    (int,), default=30, minimum=1, maximum=100
-                ),
+                max_results=InputField((int,), default=30, minimum=1, maximum=100),
             ),
         ),
         "diagnose_router_connectivity": _read_manifest(
@@ -188,17 +184,13 @@ def build_manifest_registry() -> CapabilityRegistry:
             "wifi_scan",
             confidentiality="personal",
             timeout_ms=20_000,
-            input_schema=_schema(
-                radio=InputField((str,), default="wlan0", max_length=32)
-            ),
+            input_schema=_schema(radio=InputField((str,), default="wlan0", max_length=32)),
         ),
         "restart_interface": _inactive_write_manifest("restart_interface"),
         "reload_network": _inactive_write_manifest("reload_network"),
         "uci_set": _inactive_write_manifest("uci_set"),
         "uci_commit": _inactive_write_manifest("uci_commit"),
-        "reboot_device": _inactive_write_manifest(
-            "reboot_device", destructive=True
-        ),
+        "reboot_device": _inactive_write_manifest("reboot_device", destructive=True),
     }
     return CapabilityRegistry(manifests)
 
@@ -283,8 +275,7 @@ def build_invocation_kernel(
         registry=registry,
         operations=operations,
         target_identity=(
-            f"ssh:{settings.openwrt_user}@{settings.openwrt_host}:"
-            f"{settings.openwrt_port}"
+            f"ssh:{settings.openwrt_user}@{settings.openwrt_host}:{settings.openwrt_port}"
         ),
     )
 
@@ -474,7 +465,5 @@ def register_openwrt_tools(mcp: Any, kernel: InvocationKernel) -> None:
     for fn in functions:
         manifest = kernel.registry.get(fn.__name__)
         if not manifest.active:
-            raise RuntimeError(
-                f"attempted to register inactive capability: {fn.__name__}"
-            )
+            raise RuntimeError(f"attempted to register inactive capability: {fn.__name__}")
         _attach_and_register(mcp, fn, manifest)

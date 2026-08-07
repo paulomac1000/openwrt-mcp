@@ -42,9 +42,7 @@ class InputField:
                 raise ValidationError(f"{name} must be at most {self.maximum}")
         if isinstance(value, str) and self.max_length is not None:
             if len(value) > self.max_length:
-                raise ValidationError(
-                    f"{name} must contain at most {self.max_length} characters"
-                )
+                raise ValidationError(f"{name} must contain at most {self.max_length} characters")
         return value
 
     def as_json_schema(self) -> dict[str, Any]:
@@ -99,12 +97,9 @@ class InputSchema:
         return {
             "type": "object",
             "properties": {
-                name: definition.as_json_schema()
-                for name, definition in self.fields.items()
+                name: definition.as_json_schema() for name, definition in self.fields.items()
             },
-            "required": [
-                name for name, definition in self.fields.items() if definition.required
-            ],
+            "required": [name for name, definition in self.fields.items() if definition.required],
             "additionalProperties": False,
         }
 
@@ -199,9 +194,7 @@ class KernelResult:
                 message=str(sanitize_response_data(message)),
                 retryable=retryable,
                 suggestion=(
-                    str(sanitize_response_data(suggestion))
-                    if suggestion is not None
-                    else None
+                    str(sanitize_response_data(suggestion)) if suggestion is not None else None
                 ),
             ),
             meta=meta,
@@ -339,9 +332,7 @@ class InvocationKernel:
                         return KernelResult.failed(
                             str(error.get("code", "UPSTREAM_FAILURE")),
                             str(error.get("message", "Operation failed")),
-                            retryable=bool(
-                                error.get("retryable", False) and manifest.retryable
-                            ),
+                            retryable=bool(error.get("retryable", False) and manifest.retryable),
                             suggestion=error.get("suggestion"),
                             meta=meta,
                         )

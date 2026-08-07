@@ -66,9 +66,7 @@ async def test_validation_and_internal_errors_are_classified() -> None:
     async def broken() -> dict[str, Any]:
         raise RuntimeError("secret upstream body")
 
-    registry = CapabilityRegistry(
-        {"invalid": manifest("invalid"), "broken": manifest("broken")}
-    )
+    registry = CapabilityRegistry({"invalid": manifest("invalid"), "broken": manifest("broken")})
     kernel = InvocationKernel(
         registry=registry,
         operations={"invalid": invalid, "broken": broken},
@@ -101,9 +99,7 @@ async def test_final_response_byte_limit_is_enforced() -> None:
         return {"success": True, "payload": "x" * 2048}
 
     kernel = InvocationKernel(
-        registry=CapabilityRegistry(
-            {"read": manifest("read", max_response_bytes=512)}
-        ),
+        registry=CapabilityRegistry({"read": manifest("read", max_response_bytes=512)}),
         operations={"read": oversized},
         target_identity="x",
     )

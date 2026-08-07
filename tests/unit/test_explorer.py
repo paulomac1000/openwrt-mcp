@@ -70,9 +70,7 @@ class FakeSSH:
                 0,
             ),
             "uci show dhcp": (
-                "dhcp.host1=host\n"
-                "dhcp.host1.mac='02:00:00:00:00:01'\n"
-                "dhcp.host1.ip='192.0.2.2'\n",
+                "dhcp.host1=host\ndhcp.host1.mac='02:00:00:00:00:01'\ndhcp.host1.ip='192.0.2.2'\n",
                 "",
                 0,
             ),

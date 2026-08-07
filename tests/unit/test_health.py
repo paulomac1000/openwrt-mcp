@@ -24,6 +24,7 @@ class FakeMCP:
         def decorator(fn: Any) -> Any:
             self.tools[fn.__name__] = fn
             return fn
+
         return decorator
 
 
@@ -59,9 +60,7 @@ def test_health_handler_is_loopback_health_only(settings: Any) -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        connection = http.client.HTTPConnection(
-            "127.0.0.1", server.server_port, timeout=2
-        )
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=2)
         for path, expected in (
             ("/live", 200),
             ("/ready", 200),

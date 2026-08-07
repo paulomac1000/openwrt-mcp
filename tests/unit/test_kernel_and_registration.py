@@ -34,6 +34,7 @@ class FakeExplorer:
     def __getattr__(self, _: str) -> Any:
         async def generic(*args: Any) -> dict[str, Any]:
             return {"success": True, "args": list(args)}
+
         return generic
 
 
@@ -45,6 +46,7 @@ class FakeMCP:
         def decorator(fn: Any) -> Any:
             self.tools[fn.__name__] = fn
             return fn
+
         return decorator
 
 

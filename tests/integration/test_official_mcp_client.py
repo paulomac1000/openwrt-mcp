@@ -38,9 +38,7 @@ async def test_official_client_rejects_unknown_and_missing_arguments(settings: A
     app = build_application(replace(settings, mock_mode=True))
     async with Client(app.mcp) as client:
         missing = await client.call_tool("ping_host", {})
-        unknown = await client.call_tool(
-            "ping_host", {"host": "example.com", "unknown": "ignored"}
-        )
+        unknown = await client.call_tool("ping_host", {"host": "example.com", "unknown": "ignored"})
         assert missing.is_error is True
         assert unknown.is_error is True
 
@@ -59,9 +57,7 @@ class FailingExplorer(MockOpenWRTExplorer):
 
 @pytest.mark.integration
 async def test_official_client_receives_sanitized_tool_error(settings: Any) -> None:
-    app = build_application(
-        replace(settings, mock_mode=True), explorer_factory=FailingExplorer
-    )
+    app = build_application(replace(settings, mock_mode=True), explorer_factory=FailingExplorer)
     async with Client(app.mcp) as client:
         result = await client.call_tool("get_router_info", {})
         rendered = "\n".join(str(getattr(block, "text", "")) for block in result.content)
@@ -88,9 +84,7 @@ class SlowExplorer(MockOpenWRTExplorer):
 @pytest.mark.integration
 async def test_official_client_timeout_and_cancellation_release_lock(settings: Any) -> None:
     explorer = SlowExplorer()
-    app = build_application(
-        replace(settings, mock_mode=True), explorer_factory=lambda: explorer
-    )
+    app = build_application(replace(settings, mock_mode=True), explorer_factory=lambda: explorer)
     manifest = app.kernel.registry.get("get_router_info")
     app.kernel.registry._manifests["get_router_info"] = replace(  # noqa: SLF001
         manifest, timeout_ms=20

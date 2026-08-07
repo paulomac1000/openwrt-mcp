@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Local deterministic quality gate used by agents and CI."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -25,8 +26,17 @@ def main() -> int:
     run(python, "scripts/validate_docs.py", "AGENTS.md", "docs/openwrt-mcp.md", env=environment)
     run(python, "-m", "pytest", "-q", env=environment)
     run(
-        python, "-m", "coverage", "run", "--branch", "-m", "pytest",
-        "-q", "-m", "not integration", env=environment,
+        python,
+        "-m",
+        "coverage",
+        "run",
+        "--branch",
+        "-m",
+        "pytest",
+        "-q",
+        "-m",
+        "not integration",
+        env=environment,
     )
     run(python, "-m", "coverage", "report", "--fail-under=80", env=environment)
     mock_environment = dict(environment)

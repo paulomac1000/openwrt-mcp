@@ -74,9 +74,7 @@ class Settings:
             openwrt_host=host,
             openwrt_port=_int_env("OPENWRT_PORT", 22, minimum=1, maximum=65535),
             openwrt_user=user,
-            openwrt_ssh_key=Path(
-                os.getenv("OPENWRT_SSH_KEY", "/app/keys/openwrt_id_ed25519")
-            ),
+            openwrt_ssh_key=Path(os.getenv("OPENWRT_SSH_KEY", "/app/keys/openwrt_id_ed25519")),
             openwrt_password=os.getenv("OPENWRT_PASSWORD") or None,
             openwrt_known_hosts=known_hosts,
             insecure_skip_host_key_check=insecure_host_key,
@@ -84,9 +82,7 @@ class Settings:
             health_port=_int_env("HEALTH_PORT", 9094, minimum=1, maximum=65535),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
             enable_audit_logging=_bool_env("ENABLE_AUDIT_LOGGING", True),
-            audit_log_file=Path(
-                os.getenv("AUDIT_LOG_FILE", "/app/log/openwrt_mcp.log")
-            ),
+            audit_log_file=Path(os.getenv("AUDIT_LOG_FILE", "/app/log/openwrt_mcp.log")),
             mcp_transport=transport,
             mock_mode=mock_mode,
         )

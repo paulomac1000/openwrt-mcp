@@ -28,11 +28,9 @@ class SSHConnection:
             f"ssh_cancel_{id(self)}",
             default=False,
         )
-        self._timeout_override: contextvars.ContextVar[int | None] = (
-            contextvars.ContextVar(
-                f"ssh_timeout_{id(self)}",
-                default=None,
-            )
+        self._timeout_override: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+            f"ssh_timeout_{id(self)}",
+            default=None,
         )
 
     def set_timeout(self, seconds: int) -> None:
@@ -143,11 +141,7 @@ class SSHConnection:
     ) -> tuple[str, str, int]:
         import asyncssh
 
-        timeout = (
-            timeout_seconds
-            or self._timeout_override.get()
-            or self.settings.ssh_timeout
-        )
+        timeout = timeout_seconds or self._timeout_override.get() or self.settings.ssh_timeout
         if not 1 <= timeout <= 300:
             return "", "Invalid timeout", 1
         if self._cancel_requested.get():

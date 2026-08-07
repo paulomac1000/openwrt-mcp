@@ -46,9 +46,7 @@ async def test_mcp_mapping_returns_structured_success_and_tool_error() -> None:
         }
 
     kernel = InvocationKernel(
-        registry=CapabilityRegistry(
-            {"good": manifest("good"), "bad": manifest("bad")}
-        ),
+        registry=CapabilityRegistry({"good": manifest("good"), "bad": manifest("bad")}),
         operations={"good": good, "bad": bad},
         target_identity="router",
     )

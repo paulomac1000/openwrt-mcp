@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run every active capability against deterministic mock router data."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +20,7 @@ class SmokeMCP:
         def decorator(fn: Any) -> Any:
             self.tools[fn.__name__] = fn
             return fn
+
         return decorator
 
 

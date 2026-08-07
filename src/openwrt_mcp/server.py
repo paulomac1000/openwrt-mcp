@@ -36,19 +36,14 @@ def setup_logging(settings: Settings) -> None:
     if getattr(root, "_openwrt_configured", False):
         return
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(
-        SanitizingFormatter(
-            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        )
-    )
+    handler.setFormatter(SanitizingFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(getattr(logging, settings.log_level, logging.INFO))
     root.__dict__["_openwrt_configured"] = True
     if settings.insecure_skip_host_key_check:
         logger.warning(
-            "OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK is enabled; "
-            "do not use this profile in production"
+            "OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK is enabled; do not use this profile in production"
         )
 
 
@@ -134,15 +129,12 @@ class HealthState:
         with self._lock:
             checked_at = self.dependency_checked_at
             fresh = (
-                checked_at is not None
-                and time.monotonic() - checked_at <= _READINESS_TTL_SECONDS
+                checked_at is not None and time.monotonic() - checked_at <= _READINESS_TTL_SECONDS
             )
             return {
                 "checked": self.dependency_checked,
                 "healthy": self.dependency_healthy,
-                "ready": self.dependency_checked
-                and self.dependency_healthy
-                and fresh,
+                "ready": self.dependency_checked and self.dependency_healthy and fresh,
                 "fresh": fresh,
                 "error": self.dependency_error,
                 "checked_at_monotonic": checked_at,
@@ -170,9 +162,7 @@ def make_health_handler(
                     {
                         "status": "ready" if ready else "not_ready",
                         "version": __version__,
-                        "uptime_seconds": int(
-                            time.monotonic() - state.started_at
-                        ),
+                        "uptime_seconds": int(time.monotonic() - state.started_at),
                         "dependency": dependency,
                         "active_tools": len(app.kernel.registry.active()),
                         "supported_tools": len(app.kernel.registry.supported()),
