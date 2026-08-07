@@ -1,3 +1,4 @@
+# ai-skills-policy-profile: protected-release
 name: Publish tested container
 
 on:
@@ -14,10 +15,60 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  verify-ci-payload:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download exact CI evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: openwrt-mcp-evidence-${{ github.event.workflow_run.id }}
+          path: release-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify closed CI payload without executing it
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd release-payload
+          sha256sum --check ci-evidence.sha256
+          sha256sum --check image.sha256
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = json.loads(Path("ci-evidence.json").read_text(encoding="utf-8"))
+          if evidence["provider"] != "github-actions":
+              raise SystemExit("unexpected evidence provider")
+          if evidence["repository"] != os.environ["EXPECTED_REPOSITORY"]:
+              raise SystemExit("repository identity mismatch")
+          if evidence["revision"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("source revision mismatch")
+          if evidence["run_id"] != int(os.environ["EXPECTED_RUN_ID"]):
+              raise SystemExit("producer run mismatch")
+          if evidence["image"]["source_revision"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("image source label mismatch")
+          PY
+          docker load --input image.tar.gz
+          image="openwrt-mcp:ci-$EXPECTED_SHA"
+          test "$(docker image inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$image")" = "$EXPECTED_SHA"
+
+  publish:
+    if: github.event.workflow_run.conclusion == 'success'
+    needs: verify-ci-payload
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ghcr-production
     permissions:
       actions: read
       contents: read
@@ -25,28 +76,46 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Checkout exact CI revision
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
       - name: Download exact CI evidence
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: openwrt-mcp-evidence-${{ github.event.workflow_run.id }}
-          path: .
+          path: release-payload
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify downloaded wheel and locks
+      - name: Re-verify and load exact smoke-tested image
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ github.event.workflow_run.head_sha }}"
-          sha256sum --check wheel.sha256
-          test -s requirements-runtime.lock
-          test -s requirements-dev.lock
+          cd release-payload
+          sha256sum --check ci-evidence.sha256
+          sha256sum --check image.sha256
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = json.loads(Path("ci-evidence.json").read_text(encoding="utf-8"))
+          expected = {
+              "provider": "github-actions",
+              "repository": os.environ["EXPECTED_REPOSITORY"],
+              "revision": os.environ["EXPECTED_SHA"],
+              "run_id": int(os.environ["EXPECTED_RUN_ID"]),
+          }
+          for key, value in expected.items():
+              if evidence.get(key) != value:
+                  raise SystemExit(f"evidence mismatch for {key}")
+          if evidence["image"]["source_revision"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("image source label mismatch")
+          PY
+          docker load --input image.tar.gz
+          image="openwrt-mcp:ci-$EXPECTED_SHA"
+          test "$(docker image inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$image")" = "$EXPECTED_SHA"
 
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
@@ -55,20 +124,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build image only from tested artifacts
+      - name: Promote exact CI image
+        shell: bash
         run: |
           set -euo pipefail
-          tag=ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}
-          docker build --tag "$tag" .
-          docker run --rm -e OPENWRT_MOCK_MODE=1 "$tag" \
-            python -m openwrt_mcp.artifact_smoke
-          docker push "$tag"
+          source="openwrt-mcp:ci-${{ github.event.workflow_run.head_sha }}"
+          target="ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}"
+          docker tag "$source" "$target"
+          docker push "$target"
 
       - name: Resolve pushed digest
         id: digest
+        shell: bash
         run: |
           set -euo pipefail
-          tag=ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}
+          tag="ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}"
           docker pull "$tag"
           digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$tag" | cut -d@ -f2)"
           test -n "$digest"

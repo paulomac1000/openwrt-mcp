@@ -18,7 +18,7 @@ review_triggers:
 
 ## Operational answer
 
-The supported L2 profile exposes 19 read-only capabilities over MCP stdio. Five historical write or destructive names remain in the supported catalog but are inactive and are never registered with the SDK. A loopback HTTP listener exposes only `/live`, `/health`, and `/ready`.
+The supported L1 local profile exposes 19 read-only capabilities over MCP stdio. It intentionally makes no L2 principal, authorization, or stable target-binding claim. Five historical write or destructive names remain in the supported catalog but are inactive and are never registered with the SDK. A loopback HTTP listener exposes only `/live`, `/health`, and `/ready`.
 
 ## Event-loop ownership
 
@@ -53,9 +53,9 @@ Outside deterministic mock mode, `OPENWRT_KNOWN_HOSTS` is required. The explicit
 
 ## Dependency and artifact policy
 
-`requirements-runtime.lock` and `requirements-dev.lock` are reviewed, committed pip-compile outputs with hashes. CI regenerates candidate locks and fails when they differ from the committed files. The build backend is pinned and the wheel is built with `--no-isolation` from the locked environment.
+`requirements-runtime.lock` and `requirements-dev.lock` are reviewed, committed pip-compile outputs with hashes. Ordinary CI consumes those committed locks without re-resolving the dependency graph. Lock regeneration is an explicit maintenance action. The build backend is pinned and the wheel is built with `--no-isolation` from the locked environment.
 
-CI tests the exact wheel and builds the container from that wheel plus the reviewed runtime lock. Publishing consumes the provider-backed CI artifact for the exact successful `main` SHA; it does not resolve dependencies again.
+CI tests the exact wheel, builds the container once from that wheel plus the reviewed runtime lock, smoke-tests that exact image, and exports a closed image archive with checksums and source-revision metadata. Publishing consumes the exact successful `main` CI artifact, verifies its checksum and OCI revision label, and promotes the loaded image without checking out source, rebuilding it, or executing it in the privileged publisher.
 
 ## Verification
 
@@ -65,4 +65,4 @@ Local deterministic verification:
 .venv/bin/python scripts/ci.py
 ```
 
-Provider-backed verification additionally runs the stable MCP 2.0.0 official client, Ruff, mypy strict, Bandit, pip-audit, exact-wheel smoke, and exact-container smoke. Real-router host-key mismatch and cancellation cleanup require the isolated laboratory described in `docs/migration-assessment.yaml`.
+Provider-backed verification additionally runs the stable MCP 2.0.0 official client, real subprocess stdio smoke for modern and legacy protocol revisions, Ruff, mypy strict, Bandit, pip-audit, exact-wheel smoke, and exact-container smoke. Real-router host-key mismatch and cancellation cleanup require the isolated laboratory described in `docs/migration-assessment.yaml`.

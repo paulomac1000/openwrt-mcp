@@ -138,5 +138,5 @@ class SecurityValidator:
         return bool(
             isinstance(term, str)
             and 0 < len(term) <= 100
-            and re.fullmatch(r"[A-Za-z0-9\s.\-:_]+", term)
+            and re.fullmatch(r"[A-Za-z0-9 .\-:_]+", term)
         )

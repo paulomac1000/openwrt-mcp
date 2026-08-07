@@ -5,11 +5,15 @@
 ### Review follow-up
 
 - upgraded the required MCP Python SDK from `2.0.0b2` to stable `2.0.0`
-- removed the loopback REST invocation adapter from the L2 runtime profile
+- removed the loopback REST invocation adapter and made the supported runtime profile explicitly L1 local read-only stdio
 - added closed, kernel-owned capability input schemas and transport-independent validation
 - made official MCP `CallToolResult` mapping the only production SDK path
 - committed hash-locked dependency inputs and changed publishing to consume exact CI artifacts
 - pinned the build backend and disabled isolated wheel builds
+- changed capability defaults to conservative no-retry/no-reversibility claims and disabled unsupported confirmation claims
+- added kernel-enforced response byte limits and richer capability discovery metadata
+- added real subprocess stdio artifact smoke for modern and legacy MCP revisions
+- changed container release to build once in CI and promote the exact smoke-tested archive
 
 ## [1.2.1] — 2026-05-21
 

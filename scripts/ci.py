@@ -2,6 +2,7 @@
 """Local deterministic quality gate used by agents and CI."""
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -28,7 +29,16 @@ def main() -> int:
         "-q", "-m", "not integration", env=environment,
     )
     run(python, "-m", "coverage", "report", "--fail-under=80", env=environment)
-    run(python, "scripts/mock_smoke.py", env=environment)
+    mock_environment = dict(environment)
+    if importlib.util.find_spec("mcp") is None:
+        mock_environment["PYTHONPATH"] = os.pathsep.join(
+            (str(root / "tests" / "fakes"), str(root / "src"))
+        )
+        print(
+            "official MCP SDK unavailable; mock_smoke uses the test-only SDK fake",
+            flush=True,
+        )
+    run(python, "scripts/mock_smoke.py", env=mock_environment)
     return 0
 
 

@@ -1,29 +1,43 @@
 schema_version: 1
 project: openwrt-mcp
-profile: l2-read-only-stdio
-assessed_revision: pending-final-sha
+profile: l1-local-read-only-stdio
+assessed_revision: pending-final-provider-evidence
 standards_revision: 661ff01a5e70d58d6c94a12545b24647e52063ed
 status: draft
+baseline_policy:
+  pinned_revision_reason: >-
+    This remains the last trusted immutable baseline used by this branch. The newer
+    ai-skills candidate c6dc6b13b2dd40b6e087140cd071b45067d75b39 is not adopted
+    because its exact-head CI is red and its capability-manifest machine schema and
+    normative reference disagree. Pinning a red, contradictory candidate would turn
+    compliance into an unverifiable claim.
+  next_action: >-
+    Migrate the standards lock, canonical manifests, and provider-backed adoption
+    assessment together after ai-skills publishes a green immutable successor whose
+    schema, normative reference, generator, semantic validator, and evidence contract
+    agree.
 implemented:
-  - stable MCP Python SDK 2.0.0
-  - stdio-only invocation profile
-  - closed kernel-owned input schemas
-  - target-wide serialization and manifest-owned deadlines
-  - verified SSH host identity outside mock mode
-  - inactive and unregistered write capabilities
-  - reviewed hash lockfiles and no-isolation wheel build
-  - publish from exact successful CI artifacts
+  - official MCP Python SDK 2.0.0 is the required runtime dependency
+  - stdio is the only MCP invocation transport in the supported profile
+  - the invocation kernel owns closed argument validation, deadlines, target serialization, and final response byte limits
+  - all active capability manifests default to retryable=false, idempotent=false, reversible=false unless operation-specific evidence is added
+  - inactive write and destructive capabilities are not registered and do not claim server-enforced confirmation
+  - SSH host-key verification fails closed outside explicit non-production mock/insecure modes
+  - connection loss never causes automatic command replay; ambiguous writes remain fail-closed
+  - exact wheel smoke uses real official-client stdio subprocesses for modern and legacy protocol revisions
+  - CI consumes reviewed committed hashed locks and builds/smoke-tests the container exactly once
+  - protected publishing promotes the exact CI-exported image archive without source checkout, rebuild, or image execution
+not_claimed:
+  - L2 principal authentication or capability authorization
+  - stable router identity enrollment or target revalidation
+  - server-enforced approval records for write capabilities
+  - compliance with the red ai-skills c6dc6b13 candidate manifest schema
+  - final provider-backed adoption approval for the pending final SHA
 pending_evidence:
-  - id: provider-ci
-    owner: openwrt-mcp-maintainers
-    requirement: Full CI must pass on the exact final PR SHA.
-  - id: real-router-host-key-mismatch
-    owner: openwrt-mcp-maintainers
-    requirement: Verify fail-closed behavior against an isolated router with a deliberately changed host key.
-  - id: real-router-cancellation
-    owner: openwrt-mcp-maintainers
-    requirement: Cancel an in-flight read and prove cleanup and subsequent invocation health on an isolated router.
-  - id: independent-l2-approval
-    owner: independent-reviewer
-    requirement: Record an independent adoption decision after exact-SHA evidence is complete.
+  - exact-final-SHA hosted CI with official MCP SDK 2.0.0
+  - exact-wheel modern and legacy stdio subprocess smoke outside the checkout
+  - exact-container modern and legacy stdio subprocess smoke
+  - Ruff, mypy strict, Bandit, pip-audit, coverage, wheel and image checks
+  - real-router host-key mismatch, cancellation cleanup, and bounded-output laboratory checks
+  - independent latest-format adoption assessment after a green unified ai-skills baseline exists
 waivers: []

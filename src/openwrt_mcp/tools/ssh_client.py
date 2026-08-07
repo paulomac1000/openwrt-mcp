@@ -110,7 +110,7 @@ class SSHConnection:
         return await self._execute_once(
             command.strip(),
             timeout_seconds=timeout_seconds,
-            allow_reconnect=True,
+            write_operation=False,
         )
 
     async def execute_write(
@@ -131,7 +131,7 @@ class SSHConnection:
         return await self._execute_once(
             command.strip(),
             timeout_seconds=timeout_seconds,
-            allow_reconnect=False,
+            write_operation=True,
         )
 
     async def _execute_once(
@@ -139,7 +139,7 @@ class SSHConnection:
         command: str,
         *,
         timeout_seconds: int | None,
-        allow_reconnect: bool,
+        write_operation: bool,
     ) -> tuple[str, str, int]:
         import asyncssh
 
@@ -174,37 +174,21 @@ class SSHConnection:
                 OSError,
             ) as exc:
                 self._connection = None
-                if not allow_reconnect:
+                if write_operation:
                     return (
                         "",
                         f"AMBIGUOUS_OUTCOME: connection lost during write: {exc}",
                         125,
                     )
-                return await self._retry_read_after_disconnect(command, timeout, exc)
+                return (
+                    "",
+                    f"Connection lost during read; command was not replayed: {exc}",
+                    125,
+                )
             except TimeoutError:
                 return "", f"Timeout after {timeout}s", 124
             except Exception as exc:
                 return "", f"Execution error: {exc}", 1
-
-    async def _retry_read_after_disconnect(
-        self,
-        command: str,
-        timeout: int,
-        original_error: Exception,
-    ) -> tuple[str, str, int]:
-        if not await self.connect():
-            return "", f"Connection lost: {original_error}", 1
-        try:
-            result = await self._connection.run(command, timeout=timeout)
-            return (
-                str(result.stdout),
-                str(result.stderr),
-                int(result.exit_status),
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as retry_error:
-            return "", f"Read failed after reconnect: {retry_error}", 1
 
     def _log_audit(self, command: str) -> None:
         entry = (

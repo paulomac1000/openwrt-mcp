@@ -4,6 +4,8 @@ Hardened read-only MCP server for observing one OpenWRT router over SSH.
 
 ## Supported runtime profile
 
+This is intentionally an **L1 local read-only stdio** profile. It does not claim L2 authentication, principal authorization, or stable target binding.
+
 - Official MCP Python SDK `2.0.0`
 - MCP stdio transport only
 - 19 active read capabilities
@@ -59,7 +61,7 @@ curl http://127.0.0.1:9094/ready
 
 ## Docker
 
-CI builds the wheel first and builds the image only from that wheel plus the reviewed, hashed runtime lockfile.
+CI builds the wheel first, builds the image exactly once from that wheel plus the reviewed hashed runtime lockfile, smoke-tests that exact image, and exports it for later promotion.
 
 ```bash
 python -m build --wheel --no-isolation
@@ -76,6 +78,6 @@ All non-concurrent-safe operations are serialized for the complete router target
 
 ## Release evidence
 
-The publish workflow does not rebuild dependencies or select an arbitrary ref. It consumes the wheel and lockfiles produced by a successful CI run for the exact `main` SHA, verifies the wheel hash, smoke-tests the image, and publishes that image digest.
+The publish workflow does not check out source, rebuild dependencies, rebuild the image, or execute the image. It consumes the closed image archive produced and smoke-tested by a successful CI run for the exact `main` SHA, verifies its checksum and source label, and publishes only the immutable SHA tag.
 
 See `docs/openwrt-mcp.md` and `docs/migration-assessment.yaml` for architecture and remaining real-router evidence.

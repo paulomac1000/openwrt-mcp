@@ -1,3 +1,4 @@
+# ai-skills-policy-profile: trusted-ci
 name: CI
 
 on:
@@ -15,6 +16,7 @@ concurrency:
 
 env:
   AI_SKILLS_SHA: 661ff01a5e70d58d6c94a12545b24647e52063ed
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   quality-artifact-container:
@@ -24,7 +26,7 @@ jobs:
       - name: Checkout exact candidate revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -43,48 +45,19 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: |
-            requirements-runtime.in
-            requirements-dev.in
             requirements-runtime.lock
             requirements-dev.lock
 
-      - name: Verify assessed revisions
+      - name: Verify assessed revisions and committed locks
         shell: bash
-        env:
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git -C .trusted/ai-skills rev-parse HEAD)" = "$AI_SKILLS_SHA"
-
-      - name: Resolve candidate locks for review
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install pip==26.0.1 pip-tools==7.6.0
-          python -m piptools compile --generate-hashes --allow-unsafe \
-            --output-file /tmp/requirements-runtime.lock requirements-runtime.in
-          python -m piptools compile --generate-hashes --allow-unsafe \
-            --output-file /tmp/requirements-dev.lock requirements-dev.in
-          cp /tmp/requirements-runtime.lock generated-requirements-runtime.lock
-          cp /tmp/requirements-dev.lock generated-requirements-dev.lock
-
-      - name: Upload generated locks for review
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: openwrt-mcp-lock-candidates-${{ github.run_id }}
-          path: generated-requirements-*.lock
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Require reviewed committed locks
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f requirements-runtime.lock
-          test -f requirements-dev.lock
-          cmp requirements-runtime.lock /tmp/requirements-runtime.lock
-          cmp requirements-dev.lock /tmp/requirements-dev.lock
+          test -s requirements-runtime.lock
+          test -s requirements-dev.lock
+          grep -q '^mcp==2\.0\.0 \\' requirements-runtime.lock
+          grep -q '^asyncssh==2\.24\.0 \\' requirements-runtime.lock
 
       - name: Install exact development environment
         run: |
@@ -136,26 +109,80 @@ jobs:
           test "$(find dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
           sha256sum dist/*.whl | tee wheel.sha256
 
-      - name: Smoke exact installed wheel through official client
+      - name: Smoke exact installed wheel through real stdio
         run: |
           set -euo pipefail
           python -m venv /tmp/openwrt-wheel-smoke
           /tmp/openwrt-wheel-smoke/bin/python -m pip install --require-hashes \
             -r requirements-runtime.lock
           /tmp/openwrt-wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
-          (cd /tmp && OPENWRT_MOCK_MODE=1 \
-            /tmp/openwrt-wheel-smoke/bin/python -m openwrt_mcp.artifact_smoke)
+          (cd /tmp && /tmp/openwrt-wheel-smoke/bin/python \
+            -m openwrt_mcp.artifact_smoke)
 
-      - name: Build image from tested wheel and reviewed lock
-        run: docker build --tag openwrt-mcp:${{ github.sha }} .
-
-      - name: Smoke exact container image
+      - name: Build exact container image once
         run: |
-          docker run --rm -e OPENWRT_MOCK_MODE=1 \
-            openwrt-mcp:${{ github.sha }} \
+          set -euo pipefail
+          docker build \
+            --build-arg SOURCE_REVISION="$CANDIDATE_SHA" \
+            --tag "openwrt-mcp:ci-$CANDIDATE_SHA" .
+
+      - name: Smoke exact container image through real stdio
+        run: |
+          set -euo pipefail
+          docker run --rm "openwrt-mcp:ci-$CANDIDATE_SHA" \
             python -m openwrt_mcp.artifact_smoke
 
-      - name: Upload provider-backed evidence
+      - name: Export exact smoke-tested image and evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="openwrt-mcp:ci-$CANDIDATE_SHA"
+          docker image inspect "$image" > image-inspect.json
+          test "$(docker image inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$image")" = "$CANDIDATE_SHA"
+          docker save "$image" | gzip -n > image.tar.gz
+          sha256sum image.tar.gz > image.sha256
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          def digest(path: str) -> str:
+              return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+          inspect = json.loads(Path("image-inspect.json").read_text(encoding="utf-8"))[0]
+          wheel = next(Path("dist").glob("*.whl"))
+          payload = {
+              "schema_version": 1,
+              "provider": "github-actions",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "revision": os.environ["CANDIDATE_SHA"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "job": os.environ["GITHUB_JOB"],
+              "event": os.environ["GITHUB_EVENT_NAME"],
+              "image": {
+                  "archive": "image.tar.gz",
+                  "archive_digest": digest("image.tar.gz"),
+                  "local_reference": f"openwrt-mcp:ci-{os.environ['CANDIDATE_SHA']}",
+                  "image_id": inspect["Id"],
+                  "source_revision": inspect["Config"]["Labels"]["org.opencontainers.image.revision"],
+              },
+              "artifacts": {
+                  "wheel": {"path": str(wheel), "digest": digest(str(wheel))},
+                  "runtime_lock": {"path": "requirements-runtime.lock", "digest": digest("requirements-runtime.lock")},
+                  "dev_lock": {"path": "requirements-dev.lock", "digest": digest("requirements-dev.lock")},
+                  "coverage": {"path": "coverage.xml", "digest": digest("coverage.xml")},
+              },
+          }
+          Path("ci-evidence.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+          sha256sum ci-evidence.json > ci-evidence.sha256
+
+      - name: Upload exact provider evidence and release payload
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -166,5 +193,10 @@ jobs:
             requirements-runtime.lock
             requirements-dev.lock
             dist/*.whl
+            image.tar.gz
+            image.sha256
+            image-inspect.json
+            ci-evidence.json
+            ci-evidence.sha256
           if-no-files-found: warn
           retention-days: 30

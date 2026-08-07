@@ -115,6 +115,19 @@ async def test_write_connection_loss_is_not_retried(
     assert connection.calls == 1
 
 
+async def test_read_connection_loss_is_not_replayed(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = FakeConnection()
+    connection.fail_write = True
+    install_asyncssh(monkeypatch, connection)
+    client = SSHConnection(settings)
+    _, error, code = await client.execute("ubus call system board")
+    assert code == 125
+    assert "was not replayed" in error
+    assert connection.calls == 1
+
+
 async def test_write_requires_known_hosts(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -137,3 +150,25 @@ async def test_audit_log_redacts_secret_and_ip(
     audit = Path(settings.audit_log_file).read_text(encoding="utf-8")
     assert "192.0.2.123" not in audit
     assert "<REDACTED>" in audit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ubus\u00a0list",
+        "ubus\u2003list",
+        "ubus\u2028list",
+        "ping -c 1 example.com\uff1breboot",
+        b"ubus list",
+    ],
+)
+async def test_rejected_read_input_never_dispatches(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, command: Any
+) -> None:
+    connection = FakeConnection()
+    install_asyncssh(monkeypatch, connection)
+    client = SSHConnection(settings)
+    _, error, code = await client.execute(command)  # type: ignore[arg-type]
+    assert code == 1
+    assert error.startswith("Security denial:")
+    assert connection.calls == 0

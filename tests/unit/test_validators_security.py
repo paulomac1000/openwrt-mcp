@@ -74,3 +74,15 @@ def test_read_command_rejects_shell_syntax(command: str) -> None:
     allowed, _ = SecurityValidator.validate_command(command)
     assert allowed is False
 
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "dnsmasq\u00a0lease",
+        "dnsmasq\u2003lease",
+        "dnsmasq\u2028lease",
+    ],
+)
+def test_search_term_rejects_unicode_whitespace(value: str) -> None:
+    assert SecurityValidator.is_safe_search_term(value) is False

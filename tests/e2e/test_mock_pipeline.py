@@ -2,21 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from starlette.testclient import TestClient
-
-from openwrt_mcp.server import build_application, create_rest_app
-
-
-def test_mock_rest_pipeline_uses_active_catalog(settings) -> None:
-    app = build_application(replace(settings, mock_mode=True), mcp_factory=FakeMCP)
-    client = TestClient(create_rest_app(app))
-    listing = client.get("/api/tools")
-    assert listing.status_code == 200
-    assert len(listing.json()["active"]) == 19
-    assert len(listing.json()["supported"]) == 24
-    response = client.post("/api/tools/get_router_info", json={})
-    assert response.status_code == 200
-    assert response.json()["data"]["hostname"] == "mock-router"
+from openwrt_mcp.server import build_application
 
 
 class FakeMCP:
@@ -46,6 +32,8 @@ async def test_all_active_mcp_wrappers_delegate_to_kernel(settings) -> None:
     try:
         for name, tool in app.mcp.tools.items():
             result = await tool(**arguments.get(name, {}))
-            assert result["success"] is True, name
+            assert result.is_error is False, name
+            assert result.structured_content is not None
+            assert result.structured_content["success"] is True, name
     finally:
         await app.close()

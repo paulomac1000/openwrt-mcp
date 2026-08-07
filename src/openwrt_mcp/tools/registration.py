@@ -19,9 +19,14 @@ from openwrt_mcp.application import (
 )
 from openwrt_mcp.settings import Settings
 
+SERVER_PROFILE = "l1-local-read-only-stdio"
+SDK_FAMILY = "official-python-mcp"
+SDK_VERSION = "2.0.0"
+PROTOCOL_VERSIONS = ("2026-07-28", "2025-11-25")
+
 _WRITE_INACTIVE_REASON = (
     "Write capabilities are retained in the supported catalog but disabled until "
-    "principal-bound, expiring approvals and authenticated transport policy exist."
+    "a principal-bound authorization and approval subsystem is implemented."
 )
 _NONE = InputSchema()
 _STR_REQUIRED = lambda max_length=253: InputField(  # noqa: E731
@@ -49,12 +54,13 @@ def _read_manifest(
         confidentiality=confidentiality,
         operational_impact="none",
         cost=cost,
-        idempotent=True,
-        retryable=True,
+        idempotent=False,
+        retryable=False,
         concurrent_safe=False,
         timeout_ms=timeout_ms,
         requires_confirmation=False,
-        reversible=True,
+        reversible=False,
+        max_response_bytes=262_144,
         input_schema=input_schema,
     )
 
@@ -76,8 +82,9 @@ def _inactive_write_manifest(
         retryable=False,
         concurrent_safe=False,
         timeout_ms=30_000 if destructive else 20_000,
-        requires_confirmation=True,
+        requires_confirmation=False,
         reversible=False,
+        max_response_bytes=64_000,
         active=False,
         inactive_reason=_WRITE_INACTIVE_REASON,
     )
@@ -258,6 +265,12 @@ def build_invocation_kernel(
             "server": "OpenWRT-Observer",
             "version": __version__,
             "schema_version": "2",
+            "profile": SERVER_PROFILE,
+            "sdk_family": SDK_FAMILY,
+            "sdk_version": SDK_VERSION,
+            "protocol_versions": list(PROTOCOL_VERSIONS),
+            "supported_transports": ["stdio"],
+            "active_transports": ["stdio"],
             "transports": ["stdio"],
             "supported_tools": supported,
             "active_tools": active,

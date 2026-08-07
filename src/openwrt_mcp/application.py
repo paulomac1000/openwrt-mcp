@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -123,6 +124,7 @@ class CapabilityManifest:
     timeout_ms: int
     requires_confirmation: bool
     reversible: bool
+    max_response_bytes: int = 262_144
     active: bool = True
     inactive_reason: str | None = None
     concurrency_group: str | None = None
@@ -143,6 +145,7 @@ class CapabilityManifest:
             "timeout_ms": self.timeout_ms,
             "requires_confirmation": self.requires_confirmation,
             "reversible": self.reversible,
+            "max_response_bytes": self.max_response_bytes,
             "active": self.active,
             "inactive_reason": self.inactive_reason,
             "concurrency_group": self.concurrency_group,
@@ -347,7 +350,29 @@ class InvocationKernel:
                         str(error or "Operation failed"),
                         meta=meta,
                     )
-                return KernelResult.ok(result, meta=meta)
+                candidate = KernelResult.ok(result, meta=meta)
+                try:
+                    response_size = len(
+                        json.dumps(
+                            candidate.as_dict(),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ).encode("utf-8")
+                    )
+                except (TypeError, ValueError):
+                    return KernelResult.failed(
+                        "INTERNAL",
+                        "Operation returned a non-serializable response",
+                        meta=meta,
+                    )
+                if response_size > manifest.max_response_bytes:
+                    return KernelResult.failed(
+                        "RESPONSE_TOO_LARGE",
+                        "Operation response exceeded its declared byte limit",
+                        meta=meta,
+                    )
+                return candidate
             except asyncio.CancelledError:
                 raise
             except TimeoutError:
@@ -384,5 +409,6 @@ def decode_kernel_response(result: KernelResult) -> tuple[int, dict[str, Any]]:
         "CAPABILITY_INACTIVE": 409,
         "TIMEOUT": 504,
         "UPSTREAM_FAILURE": 502,
+        "RESPONSE_TOO_LARGE": 502,
     }.get(code, 500)
     return status, result.as_dict()

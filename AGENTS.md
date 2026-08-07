@@ -16,7 +16,7 @@ This file governs the repository. Direct user instructions and platform safety r
 
 ## Supported profile
 
-The production profile is read-only MCP over stdio plus a loopback health endpoint. Do not add REST, legacy HTTP+SSE, or another invocation transport to this profile. A future authenticated Streamable HTTP adapter requires a separate design and must own or safely marshal access to its event-loop-bound resources.
+The production profile is L1 local read-only MCP over stdio plus a loopback health endpoint. Do not claim L2 compliance until an immutable caller context, authentication/authorization policy, and stable target-binding/revalidation model are implemented. Do not add REST, legacy HTTP+SSE, or another invocation transport to this profile. A future authenticated Streamable HTTP adapter requires a separate design and must own or safely marshal access to its event-loop-bound resources.
 
 ## Architecture boundaries
 
@@ -29,7 +29,7 @@ The production profile is read-only MCP over stdio plus a loopback health endpoi
 
 ## Safety boundaries
 
-Never interpolate unvalidated input into shell commands. Do not expose credentials, raw protected upstream errors, router secrets, MAC addresses, DHCP data, or topology through logs or uncontrolled exceptions. Writes are not retried after ambiguous transport failure.
+Never interpolate unvalidated input into shell commands. Do not expose credentials, raw protected upstream errors, router secrets, MAC addresses, DHCP data, or topology through logs or uncontrolled exceptions. Writes are not retried after ambiguous transport failure. Reads are also not automatically replayed after connection loss; retry semantics require operation-specific evidence and policy.
 
 ## Commands
 

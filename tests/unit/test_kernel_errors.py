@@ -26,7 +26,8 @@ def manifest(name: str, **overrides: Any) -> CapabilityManifest:
         "concurrent_safe": True,
         "timeout_ms": 50,
         "requires_confirmation": False,
-        "reversible": True,
+        "reversible": False,
+        "max_response_bytes": 262_144,
     }
     values.update(overrides)
     return CapabilityManifest(**values)
@@ -93,3 +94,21 @@ async def test_timeout_is_bounded() -> None:
     result = await kernel.invoke("slow", {})
     assert result.error is not None and result.error.code == "TIMEOUT"
     assert decode_kernel_response(result)[0] == 504
+
+
+async def test_final_response_byte_limit_is_enforced() -> None:
+    async def oversized() -> dict[str, Any]:
+        return {"success": True, "payload": "x" * 2048}
+
+    kernel = InvocationKernel(
+        registry=CapabilityRegistry(
+            {"read": manifest("read", max_response_bytes=512)}
+        ),
+        operations={"read": oversized},
+        target_identity="x",
+    )
+    result = await kernel.invoke("read", {})
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == "RESPONSE_TOO_LARGE"
+    assert decode_kernel_response(result)[0] == 502
