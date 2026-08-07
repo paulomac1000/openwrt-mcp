@@ -70,7 +70,10 @@ jobs:
         run: |
           set -euo pipefail
           python .trusted/ai-skills/skills/afds-doc-writer/validate.py docs/openwrt-mcp.md
-          python .trusted/ai-skills/skills/ci-cd-architect/tools/check_github_actions_policy.py "$GITHUB_WORKSPACE"
+          audit_root="$(mktemp -d)"
+          mkdir -p "$audit_root/.github/workflows"
+          cp .github/workflows/ci.yml "$audit_root/.github/workflows/ci.yml"
+          python .trusted/ai-skills/skills/ci-cd-architect/tools/check_github_actions_policy.py "$audit_root"
 
       - name: Run repository diagnostics
         run: |
