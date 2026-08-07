@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from mcp.types import CallToolResult, TextContent
 
@@ -29,9 +29,10 @@ _WRITE_INACTIVE_REASON = (
     "a principal-bound authorization and approval subsystem is implemented."
 )
 _NONE = InputSchema()
-_STR_REQUIRED = lambda max_length=253: InputField(  # noqa: E731
-    (str,), required=True, max_length=max_length
-)
+
+
+def _str_required(max_length: int = 253) -> InputField:
+    return InputField((str,), required=True, max_length=max_length)
 
 
 def _schema(**fields: InputField) -> InputSchema:
@@ -106,7 +107,7 @@ def build_manifest_registry() -> CapabilityRegistry:
         "read_router_uci_config": _read_manifest(
             "read_router_uci_config",
             confidentiality="sensitive",
-            input_schema=_schema(config_name=_STR_REQUIRED(64)),
+            input_schema=_schema(config_name=_str_required(64)),
         ),
         "list_router_packages": _read_manifest("list_router_packages"),
         "get_router_logs": _read_manifest(
@@ -123,7 +124,7 @@ def build_manifest_registry() -> CapabilityRegistry:
             confidentiality="sensitive",
             timeout_ms=30_000,
             input_schema=_schema(
-                search_term=_STR_REQUIRED(128),
+                search_term=_str_required(128),
                 max_results=InputField((int,), default=30, minimum=1, maximum=100),
             ),
         ),
@@ -139,7 +140,7 @@ def build_manifest_registry() -> CapabilityRegistry:
             "search_dhcp_logs",
             confidentiality="personal",
             timeout_ms=30_000,
-            input_schema=_schema(search_term=_STR_REQUIRED(128)),
+            input_schema=_schema(search_term=_str_required(128)),
         ),
         "get_device_dhcp_details": _read_manifest(
             "get_device_dhcp_details",
@@ -163,20 +164,20 @@ def build_manifest_registry() -> CapabilityRegistry:
             "ping_host",
             timeout_ms=10_000,
             input_schema=_schema(
-                host=_STR_REQUIRED(),
+                host=_str_required(),
                 count=InputField((int,), default=4, minimum=1, maximum=5),
             ),
         ),
         "traceroute_host": _read_manifest(
             "traceroute_host",
             timeout_ms=30_000,
-            input_schema=_schema(host=_STR_REQUIRED()),
+            input_schema=_schema(host=_str_required()),
         ),
         "nslookup_host": _read_manifest(
             "nslookup_host",
             timeout_ms=10_000,
             input_schema=_schema(
-                host=_STR_REQUIRED(),
+                host=_str_required(),
                 dns_server=InputField((str,), default="8.8.8.8", max_length=253),
             ),
         ),
@@ -240,7 +241,8 @@ def build_invocation_kernel(
             command_timeout = min(settings.ssh_timeout, declared_seconds)
             values = [arguments[name] for name in parameter_names]
             with explorer.ssh.timeout_scope(command_timeout):
-                return await method(*values)
+                result = await method(*values)
+            return cast(dict[str, Any], result)
 
         return operation
 
@@ -441,7 +443,7 @@ def register_openwrt_tools(mcp: Any, kernel: InvocationKernel) -> None:
         """Scan nearby Wi-Fi networks through an allowlisted interface."""
         return await _invoke_for_mcp(kernel, "wifi_scan", {"radio": radio})
 
-    functions = [
+    functions: list[Callable[..., Any]] = [
         test_router_connection,
         get_router_info,
         get_router_wifi_status,
