@@ -15,11 +15,15 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin openwrt \
 
 WORKDIR /app
 COPY requirements-runtime.lock /tmp/requirements-runtime.lock
-COPY dist/*.whl /tmp/openwrt-mcp.whl
-RUN python -m pip install --no-cache-dir --require-hashes -r /tmp/requirements-runtime.lock \
-    && python -m pip install --no-cache-dir --no-deps /tmp/openwrt-mcp.whl \
-    && python -m pip check \
-    && rm /tmp/requirements-runtime.lock /tmp/openwrt-mcp.whl
+COPY dist/*.whl /tmp/wheels/
+RUN set -eu; \
+    wheel_count="$(find /tmp/wheels -maxdepth 1 -type f -name '*.whl' | wc -l)"; \
+    test "$wheel_count" -eq 1; \
+    wheel="$(find /tmp/wheels -maxdepth 1 -type f -name '*.whl' -print -quit)"; \
+    python -m pip install --no-cache-dir --require-hashes -r /tmp/requirements-runtime.lock; \
+    python -m pip install --no-cache-dir --no-deps "$wheel"; \
+    python -m pip check; \
+    rm -rf /tmp/requirements-runtime.lock /tmp/wheels
 
 USER openwrt
 CMD ["openwrt-mcp"]
