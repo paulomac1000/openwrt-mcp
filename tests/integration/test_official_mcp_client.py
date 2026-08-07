@@ -1,13 +1,13 @@
 """Official MCP SDK 2.0.0 in-memory acceptance tests."""
+
 from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
 from typing import Any
 
-import pytest
-
 import mcp
+import pytest
 
 if getattr(mcp, "__test_fake__", False):
     pytest.skip("official MCP SDK unavailable locally", allow_module_level=True)

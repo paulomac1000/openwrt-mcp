@@ -44,7 +44,7 @@ class Settings:
     insecure_skip_host_key_check: bool = False
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         host = os.getenv("OPENWRT_HOST", "192.168.1.1").strip()
         user = os.getenv("OPENWRT_USER", "root").strip()
         if not host:

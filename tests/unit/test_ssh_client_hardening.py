@@ -39,9 +39,9 @@ class FakeConnection:
     def is_closed(self) -> bool:
         return self.closed
 
-    async def run(self, command: str, timeout: int) -> FakeResult:
+    async def run(self, command: str, **kwargs: Any) -> FakeResult:
         self.calls += 1
-        self.timeouts.append(timeout)
+        self.timeouts.append(int(kwargs["timeout"]))
         if self.fail_write:
             raise ConnectionLost("link dropped")
         self.active += 1
@@ -91,8 +91,8 @@ async def test_timeout_override_is_task_local(
     install_asyncssh(monkeypatch, connection)
     client = SSHConnection(settings)
 
-    async def invoke(timeout: int, command: str) -> None:
-        with client.timeout_scope(timeout):
+    async def invoke(timeout_seconds: int, command: str) -> None:
+        with client.timeout_scope(timeout_seconds):
             await client.execute(command)
 
     await asyncio.gather(
@@ -147,7 +147,9 @@ async def test_audit_log_redacts_secret_and_ip(
     install_asyncssh(monkeypatch, connection)
     client = SSHConnection(settings)
     await client.execute_write("uci set wireless.radio0.key=192.0.2.123")
-    audit = Path(settings.audit_log_file).read_text(encoding="utf-8")
+    audit = await asyncio.to_thread(
+        Path(settings.audit_log_file).read_text, encoding="utf-8"
+    )
     assert "192.0.2.123" not in audit
     assert "<REDACTED>" in audit
 

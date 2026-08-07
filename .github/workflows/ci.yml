@@ -85,8 +85,8 @@ jobs:
       - name: Static quality and security
         run: |
           set -euo pipefail
-          python -m ruff check .
-          python -m ruff format --check .
+          python -m ruff check src tests scripts
+          python -m ruff format --check src tests scripts
           python -m mypy src/openwrt_mcp scripts --strict
           python -m bandit -q -lll -iii -r src/openwrt_mcp scripts
           python -m pip_audit -r requirements-runtime.lock

@@ -179,7 +179,7 @@ class KernelResult:
     meta: dict[str, Any] | None = None
 
     @classmethod
-    def ok(cls, data: Any, *, meta: dict[str, Any]) -> "KernelResult":
+    def ok(cls, data: Any, *, meta: dict[str, Any]) -> KernelResult:
         return cls(success=True, data=sanitize_response_data(data), meta=meta)
 
     @classmethod
@@ -191,7 +191,7 @@ class KernelResult:
         retryable: bool = False,
         suggestion: str | None = None,
         meta: dict[str, Any] | None = None,
-    ) -> "KernelResult":
+    ) -> KernelResult:
         return cls(
             success=False,
             error=KernelError(

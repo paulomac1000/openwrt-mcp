@@ -44,7 +44,7 @@ def setup_logging(settings: Settings) -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(getattr(logging, settings.log_level, logging.INFO))
-    setattr(root, "_openwrt_configured", True)
+    root.__dict__["_openwrt_configured"] = True
     if settings.insecure_skip_host_key_check:
         logger.warning(
             "OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK is enabled; "
@@ -85,7 +85,10 @@ def build_application(
         else:
             from openwrt_mcp.tools.explorer import OpenWRTExplorer
 
-            explorer_factory = lambda: OpenWRTExplorer(resolved)
+            def create_explorer() -> OpenWRTExplorer:
+                return OpenWRTExplorer(resolved)
+
+            explorer_factory = create_explorer
 
     from openwrt_mcp.tools.registration import (
         build_invocation_kernel,
