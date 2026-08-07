@@ -38,11 +38,13 @@ jobs:
           set -euo pipefail
           python -m pip install pip==26.0.1 pip-tools==7.6.0
           python -m piptools compile --generate-hashes --allow-unsafe \
-            --output-file requirements-runtime.lock requirements-runtime.in
+            --output-file /tmp/requirements-runtime.lock requirements-runtime.in
           python -m piptools compile --generate-hashes --allow-unsafe \
-            --output-file requirements-dev.lock requirements-dev.in
-          echo 'f01ecc7d2b01701671efc9c55e346716ae42a3aaa5c1316accc517a62fb6829b  requirements-runtime.lock' | sha256sum --check -
-          echo '9118c2c357b2a43e1606a1a85b41fa2da1476eb13576f54cf92775a1d28b0aa7  requirements-dev.lock' | sha256sum --check -
+            --output-file /tmp/requirements-dev.lock requirements-dev.in
+          echo 'f01ecc7d2b01701671efc9c55e346716ae42a3aaa5c1316accc517a62fb6829b  /tmp/requirements-runtime.lock' | sha256sum --check -
+          echo '9118c2c357b2a43e1606a1a85b41fa2da1476eb13576f54cf92775a1d28b0aa7  /tmp/requirements-dev.lock' | sha256sum --check -
+          cp /tmp/requirements-runtime.lock requirements-runtime.lock
+          cp /tmp/requirements-dev.lock requirements-dev.lock
 
       - name: Commit exact reviewed locks
         shell: bash
