@@ -282,6 +282,30 @@ def build_invocation_kernel(
     )
 
 
+def _enforce_strict_mcp_input_schema(mcp: Any, name: str) -> None:
+    """Fail closed if MCP SDK 2.0.0 stops exposing its registered argument model."""
+    if not type(mcp).__module__.startswith("mcp."):
+        return
+
+    tool_manager = getattr(mcp, "_tool_manager", None)
+    get_tool = getattr(tool_manager, "get_tool", None)
+    if not callable(get_tool):
+        raise RuntimeError("MCP SDK tool manager unavailable for strict input validation")
+    tool = get_tool(name)
+    if tool is None:
+        raise RuntimeError(f"MCP SDK did not register tool {name!r}")
+
+    # MCP SDK 2.0.0 creates Pydantic argument models with the default
+    # extra='ignore'. Tighten that generated model so the advertised schema and
+    # runtime both reject unknown properties before the wrapper is invoked.
+    arg_model = tool.fn_metadata.arg_model
+    arg_model.model_config["extra"] = "forbid"
+    arg_model.model_rebuild(force=True)
+    tool.parameters = arg_model.model_json_schema(by_alias=True)
+    if tool.parameters.get("additionalProperties") is not False:
+        raise RuntimeError(f"strict MCP input schema was not applied to {name!r}")
+
+
 def _attach_and_register(
     mcp: Any,
     fn: Callable[..., Any],
@@ -291,6 +315,7 @@ def _attach_and_register(
     fn.__doc__ = f"[{manifest.risk}] {description}"
     fn.__manifest__ = manifest.as_dict()  # type: ignore[attr-defined]
     registered = mcp.tool()(fn)
+    _enforce_strict_mcp_input_schema(mcp, fn.__name__)
     try:
         registered.__manifest__ = manifest.as_dict()
     except (AttributeError, TypeError):

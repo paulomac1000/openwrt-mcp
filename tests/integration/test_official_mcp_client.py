@@ -37,6 +37,10 @@ async def test_official_client_lists_and_invokes_active_tools(settings: Any) -> 
 async def test_official_client_rejects_unknown_and_missing_arguments(settings: Any) -> None:
     app = build_application(replace(settings, mock_mode=True))
     async with Client(app.mcp) as client:
+        listing = await client.list_tools()
+        ping = next(tool for tool in listing.tools if tool.name == "ping_host")
+        assert ping.input_schema.get("additionalProperties") is False
+
         missing = await client.call_tool("ping_host", {})
         unknown = await client.call_tool("ping_host", {"host": "example.com", "unknown": "ignored"})
         assert missing.is_error is True
