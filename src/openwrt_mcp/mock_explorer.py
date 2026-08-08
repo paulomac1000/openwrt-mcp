@@ -252,9 +252,7 @@ class MockOpenWRTExplorer:
             "success": True,
             "host": validated_host,
             "resolved": True,
-            "output": (
-                f"Name: {validated_host}\nAddress: 192.0.2.200\nServer: {validated_dns}"
-            ),
+            "output": (f"Name: {validated_host}\nAddress: 192.0.2.200\nServer: {validated_dns}"),
         }
 
     async def wifi_scan(self, radio: str) -> dict[str, Any]:
