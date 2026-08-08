@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import importlib
 import inspect
-
-import pytest
 
 
 _EXPECTED_LAB_TESTS = {
@@ -15,8 +12,12 @@ _EXPECTED_LAB_TESTS = {
 }
 
 
+def _load(module_name: str) -> object:
+    return __import__(module_name, fromlist=["*"])
+
+
 def test_real_router_acceptance_gate_has_owned_executable_cases() -> None:
-    module = importlib.import_module("tests.integration.test_real_router_acceptance")
+    module = _load("tests.integration.test_real_router_acceptance")
     discovered = {
         name
         for name, value in vars(module).items()
@@ -26,8 +27,8 @@ def test_real_router_acceptance_gate_has_owned_executable_cases() -> None:
 
 
 def test_only_deferred_write_profile_is_an_explicit_not_implemented_placeholder() -> None:
-    module = importlib.import_module("tests.integration.test_real_router_todos")
-    function = module.test_real_router_write_authorization_and_approval_workflow
+    module = _load("tests.integration.test_real_router_todos")
+    function = getattr(module, "test_real_router_write_authorization_and_approval_workflow")
     skip_reasons = [
         mark.kwargs.get("reason", "")
         for mark in getattr(function, "pytestmark", [])
@@ -35,5 +36,9 @@ def test_only_deferred_write_profile_is_an_explicit_not_implemented_placeholder(
     ]
     assert len(skip_reasons) == 1
     assert skip_reasons[0].startswith("NOT_IMPLEMENTED(")
-    with pytest.raises(NotImplementedError, match="future authenticated write profile"):
+    try:
         function()
+    except NotImplementedError as exc:
+        assert "future authenticated write profile" in str(exc)
+    else:
+        raise AssertionError("write-profile placeholder must raise NotImplementedError")
