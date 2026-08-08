@@ -14,46 +14,54 @@ def _relative(path: Path, root: Path) -> Path:
     return path.resolve().relative_to(root.resolve())
 
 
+def _raises_not_implemented(tree: ast.AST) -> bool:
+    return any(
+        isinstance(node, ast.Raise)
+        and isinstance(node.exc, ast.Call)
+        and isinstance(node.exc.func, ast.Name)
+        and node.exc.func.id == "NotImplementedError"
+        for node in ast.walk(tree)
+    )
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     findings: list[str] = []
-    placeholder_count = 0
+    placeholder_files: list[Path] = []
 
     for source_root in (root / "src", root / "tests"):
         for path in sorted(source_root.rglob("*.py")):
             relative = _relative(path, root)
             text = path.read_text(encoding="utf-8")
-
-            if relative.parts[0] == "src" and ("TODO" in text or "FIXME" in text):
-                findings.append(f"{relative}: executable source contains TODO/FIXME")
-
-            if _MARKER not in text:
-                continue
-            count = text.count(_MARKER)
-            placeholder_count += count
-            if relative != _ALLOWED_PLACEHOLDER:
-                findings.append(f"{relative}: {_MARKER} is not an approved placeholder")
-                continue
-
-            if count != 1:
-                findings.append(f"{relative}: expected exactly one {_MARKER} marker, found {count}")
             tree = ast.parse(text, filename=str(relative))
-            raises_not_implemented = any(
-                isinstance(node, ast.Raise)
-                and isinstance(node.exc, ast.Call)
-                and isinstance(node.exc.func, ast.Name)
-                and node.exc.func.id == "NotImplementedError"
-                for node in ast.walk(tree)
-            )
-            if not raises_not_implemented:
-                findings.append(f"{relative}: placeholder must raise NotImplementedError")
+
+            if relative.parts[0] == "src":
+                if "TODO" in text or "FIXME" in text:
+                    findings.append(f"{relative}: executable source contains TODO/FIXME")
+                if _MARKER in text or _raises_not_implemented(tree):
+                    findings.append(f"{relative}: executable source contains an implementation placeholder")
+                continue
+
+            if not _raises_not_implemented(tree):
+                continue
+
+            placeholder_files.append(relative)
+            if relative != _ALLOWED_PLACEHOLDER:
+                findings.append(f"{relative}: NotImplementedError is not an approved placeholder")
+                continue
+
+            if text.count(_MARKER) != 1:
+                findings.append(
+                    f"{relative}: expected exactly one {_MARKER} marker in the owned placeholder"
+                )
             if "pytest.mark.skip" not in text:
                 findings.append(f"{relative}: placeholder must be an explicit skipped test")
 
-    if placeholder_count != 1:
+    if placeholder_files != [_ALLOWED_PLACEHOLDER]:
+        rendered = ", ".join(str(path) for path in placeholder_files) or "none"
         findings.append(
-            f"repository must contain exactly one owned {_MARKER} placeholder; "
-            f"found {placeholder_count}"
+            "repository must contain exactly one owned NotImplementedError placeholder at "
+            f"{_ALLOWED_PLACEHOLDER}; found: {rendered}"
         )
 
     if findings:
