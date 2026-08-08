@@ -5,11 +5,7 @@ from typing import Any
 import pytest
 from mcp.types import CallToolResult
 
-from openwrt_mcp.application import (
-    CapabilityManifest,
-    CapabilityRegistry,
-    InvocationKernel,
-)
+from openwrt_mcp.application import CapabilityManifest, CapabilityRegistry, InvocationKernel
 from openwrt_mcp.tools.registration import _invoke_for_mcp
 
 
@@ -59,6 +55,10 @@ async def test_mcp_mapping_returns_structured_success_and_tool_error() -> None:
     assert success.structured_content["success"] is True
     assert isinstance(failure, CallToolResult)
     assert failure.is_error is True
+    assert failure.structured_content is not None
+    assert failure.structured_content["success"] is False
+    assert failure.structured_content["error"]["code"] == "UPSTREAM_FAILURE"
     rendered = "\n".join(str(block.text) for block in failure.content)
     assert "router-secret" not in rendered
+    assert "router-secret" not in str(failure.structured_content)
     assert "<REDACTED>" in rendered

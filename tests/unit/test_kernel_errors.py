@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from openwrt_mcp.application import (
     CapabilityManifest,
     CapabilityRegistry,
@@ -77,6 +79,23 @@ async def test_validation_and_internal_errors_are_classified() -> None:
     assert invalid_result.error is not None and invalid_result.error.code == "INVALID_PARAM"
     assert broken_result.error is not None
     assert broken_result.error.message == "Internal server error"
+
+
+@pytest.mark.parametrize("error", [TypeError("bug"), ValueError("bug")])
+async def test_operation_programming_errors_are_internal(error: Exception) -> None:
+    async def broken() -> dict[str, Any]:
+        raise error
+
+    kernel = InvocationKernel(
+        registry=CapabilityRegistry({"broken": manifest("broken")}),
+        operations={"broken": broken},
+        target_identity="x",
+    )
+    result = await kernel.invoke("broken", {})
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == "INTERNAL"
+    assert result.error.message == "Internal server error"
 
 
 async def test_timeout_is_bounded() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import Any
 
@@ -10,16 +11,29 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"Authorization:\s*.+", re.I), "Authorization: <REDACTED>"),
     (
         re.compile(
-            r"\b(password|passwd|psk|secret|token|key|api[_-]?key)\b"
-            r"(\s*[=:]\s*)('[^']*'|\"[^\"]*\"|\S+)",
+            r"(?<![A-Za-z0-9])"
+            r"(?P<name>password|passwd|psk|secret|token|key|api[_-]?key|pre[_-]?shared)"
+            r"(?![A-Za-z0-9])"
+            r"(?P<separator>\s*[=:]\s*)"
+            r"(?P<value>'[^']*'|\"[^\"]*\"|\S+)",
             re.I,
         ),
-        r"\1\2<REDACTED>",
+        r"\g<name>\g<separator><REDACTED>",
     ),
 )
-_IP_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_IPV6_CANDIDATE_PATTERN = re.compile(
+    r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])"
+)
+_MAC_PATTERN = re.compile(
+    r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f])",
+    re.I,
+)
 _SECRET_KEY_RE = re.compile(
-    r"\b(password|passwd|psk|secret|token|key|api[_-]?key|pre[_-]?shared)\b", re.I
+    r"(?:^|[^A-Za-z0-9])"
+    r"(?:password|passwd|psk|secret|token|key|api[_-]?key|pre[_-]?shared)"
+    r"(?:$|[^A-Za-z0-9])",
+    re.I,
 )
 
 
@@ -29,8 +43,23 @@ def _redact_secrets(text: str) -> str:
     return text
 
 
+def _redact_ipv6(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        candidate = match.group(0)
+        try:
+            parsed = ipaddress.ip_address(candidate)
+        except ValueError:
+            return candidate
+        return "<IP_REDACTED>" if parsed.version == 6 else candidate
+
+    return _IPV6_CANDIDATE_PATTERN.sub(replace, text)
+
+
 def sanitize_log_line(line: str) -> str:
-    return _IP_PATTERN.sub("<IP_REDACTED>", _redact_secrets(line))
+    sanitized = _redact_secrets(line)
+    sanitized = _IPV4_PATTERN.sub("<IP_REDACTED>", sanitized)
+    sanitized = _redact_ipv6(sanitized)
+    return _MAC_PATTERN.sub("<MAC_REDACTED>", sanitized)
 
 
 def sanitize_response_data(data: Any) -> Any:

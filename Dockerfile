@@ -26,4 +26,7 @@ RUN set -eu; \
     rm -rf /tmp/requirements-runtime.lock /tmp/wheels
 
 USER openwrt
+STOPSIGNAL SIGINT
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\"HEALTH_PORT\", \"9094\")}/live', timeout=2).read()"]
 CMD ["openwrt-mcp"]

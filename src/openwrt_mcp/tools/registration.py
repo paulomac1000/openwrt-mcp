@@ -126,7 +126,7 @@ def build_manifest_registry() -> CapabilityRegistry:
             confidentiality="sensitive",
             timeout_ms=30_000,
             input_schema=_schema(
-                search_term=_str_required(128),
+                search_term=_str_required(100),
                 max_results=InputField((int,), default=30, minimum=1, maximum=100),
             ),
         ),
@@ -142,14 +142,14 @@ def build_manifest_registry() -> CapabilityRegistry:
             "search_dhcp_logs",
             confidentiality="personal",
             timeout_ms=30_000,
-            input_schema=_schema(search_term=_str_required(128)),
+            input_schema=_schema(search_term=_str_required(100)),
         ),
         "get_device_dhcp_details": _read_manifest(
             "get_device_dhcp_details",
             confidentiality="personal",
             input_schema=_schema(
-                mac_address=InputField((str, type(None)), default=None, max_length=32),
-                ip_address=InputField((str, type(None)), default=None, max_length=64),
+                mac_address=InputField((str, type(None)), default=None, max_length=17),
+                ip_address=InputField((str, type(None)), default=None, max_length=45),
             ),
         ),
         "get_router_context": _read_manifest(
@@ -187,7 +187,7 @@ def build_manifest_registry() -> CapabilityRegistry:
             "wifi_scan",
             confidentiality="personal",
             timeout_ms=20_000,
-            input_schema=_schema(radio=InputField((str,), default="wlan0", max_length=32)),
+            input_schema=_schema(radio=InputField((str,), default="wlan0", max_length=15)),
         ),
         "restart_interface": _inactive_write_manifest("restart_interface"),
         "reload_network": _inactive_write_manifest("reload_network"),
@@ -294,7 +294,11 @@ def _attach_and_register(
     fn.__doc__ = f"[{manifest.risk}] {description}"
     fn.__manifest__ = manifest.as_dict()  # type: ignore[attr-defined]
     registered = mcp.tool()(fn)
-    enforce_strict_input_schema(mcp, fn.__name__)
+    enforce_strict_input_schema(
+        mcp,
+        fn.__name__,
+        manifest.input_schema.as_json_schema(),
+    )
     try:
         registered.__manifest__ = manifest.as_dict()
     except (AttributeError, TypeError):
@@ -324,6 +328,7 @@ async def _invoke_for_mcp(
     )
     return CallToolResult(
         content=[TextContent(type="text", text=f"{error.code}: {error.message}")],
+        structured_content=payload,
         is_error=True,
     )
 

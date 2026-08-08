@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from openwrt_mcp.settings import Settings, get_settings
 from openwrt_mcp.validators import SecurityValidator
 
 logger = logging.getLogger("openwrt-mcp.ssh")
+_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
 class SSHConnection:
@@ -61,7 +63,10 @@ class SSHConnection:
 
         async with self._connect_lock:
             if self._connection is not None:
-                return True
+                is_closed = getattr(self._connection, "is_closed", None)
+                if not callable(is_closed) or not is_closed():
+                    return True
+                self._connection = None
 
             if self.settings.openwrt_known_hosts is not None:
                 known_hosts: str | None = str(self.settings.openwrt_known_hosts)
@@ -92,7 +97,7 @@ class SSHConnection:
                 self._connection = await asyncssh.connect(**kwargs)
                 return True
             except Exception as exc:
-                logger.error("SSH connection failed: %s", exc)
+                logger.error("SSH connection failed (%s)", type(exc).__name__)
                 self._connection = None
                 return False
 
@@ -132,6 +137,26 @@ class SSHConnection:
             write_operation=True,
         )
 
+    async def _discard_connection(self) -> None:
+        """Detach and close the current SSH session after an ambiguous interruption."""
+        connection = self._connection
+        self._connection = None
+        if connection is None:
+            return
+        try:
+            connection.close()
+            await asyncio.wait_for(
+                connection.wait_closed(),
+                timeout=_CLOSE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            abort = getattr(connection, "abort", None)
+            if callable(abort):
+                abort()
+            logger.warning("SSH connection cleanup timed out")
+        except Exception as exc:
+            logger.warning("SSH connection cleanup failed (%s)", type(exc).__name__)
+
     async def _execute_once(
         self,
         command: str,
@@ -141,7 +166,11 @@ class SSHConnection:
     ) -> tuple[str, str, int]:
         import asyncssh
 
-        timeout = timeout_seconds or self._timeout_override.get() or self.settings.ssh_timeout
+        timeout = timeout_seconds
+        if timeout is None:
+            timeout = self._timeout_override.get()
+        if timeout is None:
+            timeout = self.settings.ssh_timeout
         if not 1 <= timeout <= 300:
             return "", "Invalid timeout", 1
         if self._cancel_requested.get():
@@ -161,28 +190,31 @@ class SSHConnection:
                     int(result.exit_status),
                 )
             except asyncio.CancelledError:
+                await self._discard_connection()
                 raise
+            except TimeoutError:
+                await self._discard_connection()
+                return "", f"Timeout after {timeout}s", 124
             except (
                 asyncssh.ConnectionLost,
                 asyncssh.DisconnectError,
                 OSError,
-            ) as exc:
-                self._connection = None
+            ):
+                await self._discard_connection()
                 if write_operation:
                     return (
                         "",
-                        f"AMBIGUOUS_OUTCOME: connection lost during write: {exc}",
+                        "AMBIGUOUS_OUTCOME: SSH connection lost during write",
                         125,
                     )
                 return (
                     "",
-                    f"Connection lost during read; command was not replayed: {exc}",
+                    "SSH connection lost during read; command was not replayed",
                     125,
                 )
-            except TimeoutError:
-                return "", f"Timeout after {timeout}s", 124
             except Exception as exc:
-                return "", f"Execution error: {exc}", 1
+                logger.error("SSH command execution failed (%s)", type(exc).__name__)
+                return "", "SSH command execution failed", 1
 
     def _log_audit(self, command: str) -> None:
         caller = get_caller_context()
@@ -195,18 +227,15 @@ class SSHConnection:
         try:
             path = self.settings.audit_log_file
             path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as handle:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags | nofollow, 0o600)
+            with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+                os.fchmod(handle.fileno(), 0o600)
                 handle.write(sanitize_log_line(entry))
         except OSError as exc:
-            logger.error("Audit log write failed: %s", exc)
+            logger.error("Audit log write failed (%s)", type(exc).__name__)
 
     async def close(self) -> None:
         async with self._connect_lock:
-            connection = self._connection
-            self._connection = None
-            if connection is not None:
-                try:
-                    connection.close()
-                    await connection.wait_closed()
-                except Exception as exc:
-                    logger.warning("SSH close failed: %s", exc)
+            await self._discard_connection()

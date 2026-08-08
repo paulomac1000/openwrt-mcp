@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Lock
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -63,24 +64,40 @@ class Settings:
         )
         known_hosts_raw = os.getenv("OPENWRT_KNOWN_HOSTS", "").strip()
         known_hosts = Path(known_hosts_raw) if known_hosts_raw else None
-        if not mock_mode and known_hosts is None and not insecure_host_key:
-            raise ValueError(
-                "OPENWRT_KNOWN_HOSTS is required outside mock mode; "
-                "set OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK=1 only for an explicit "
-                "non-production exception"
-            )
+        ssh_key = Path(os.getenv("OPENWRT_SSH_KEY", "/app/keys/openwrt_id_ed25519"))
+        password = os.getenv("OPENWRT_PASSWORD") or None
+        log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+        if log_level not in _LOG_LEVELS:
+            raise ValueError(f"LOG_LEVEL must be one of: {', '.join(sorted(_LOG_LEVELS))}")
+
+        if not mock_mode:
+            if known_hosts is None and not insecure_host_key:
+                raise ValueError(
+                    "OPENWRT_KNOWN_HOSTS is required outside mock mode; "
+                    "set OPENWRT_INSECURE_SKIP_HOST_KEY_CHECK=1 only for an explicit "
+                    "non-production exception"
+                )
+            if known_hosts is not None and not known_hosts.is_file():
+                raise ValueError("OPENWRT_KNOWN_HOSTS must point to an existing regular file")
+            if ssh_key.exists() and not ssh_key.is_file():
+                raise ValueError("OPENWRT_SSH_KEY must point to a regular file")
+            if not ssh_key.is_file() and password is None:
+                raise ValueError(
+                    "SSH authentication requires an existing OPENWRT_SSH_KEY file "
+                    "or OPENWRT_PASSWORD"
+                )
 
         return cls(
             openwrt_host=host,
             openwrt_port=_int_env("OPENWRT_PORT", 22, minimum=1, maximum=65535),
             openwrt_user=user,
-            openwrt_ssh_key=Path(os.getenv("OPENWRT_SSH_KEY", "/app/keys/openwrt_id_ed25519")),
-            openwrt_password=os.getenv("OPENWRT_PASSWORD") or None,
+            openwrt_ssh_key=ssh_key,
+            openwrt_password=password,
             openwrt_known_hosts=known_hosts,
             insecure_skip_host_key_check=insecure_host_key,
             ssh_timeout=_int_env("SSH_TIMEOUT", 30, minimum=1, maximum=300),
             health_port=_int_env("HEALTH_PORT", 9094, minimum=1, maximum=65535),
-            log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
+            log_level=log_level,
             enable_audit_logging=_bool_env("ENABLE_AUDIT_LOGGING", True),
             audit_log_file=Path(os.getenv("AUDIT_LOG_FILE", "/app/log/openwrt_mcp.log")),
             mcp_transport=transport,

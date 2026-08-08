@@ -41,15 +41,32 @@ def _server_params(*, health_port: int) -> StdioServerParameters:
 
 
 def _assert_catalog_and_result(listing: Any, result: Any) -> None:
-    names = {tool.name for tool in listing.tools}
+    tools = {tool.name: tool for tool in listing.tools}
+    names = set(tools)
     if len(names) != 19 or "uci_set" in names or "get_router_info" not in names:
         raise RuntimeError(f"unexpected active catalog: {sorted(names)}")
+    if any(tool.input_schema.get("additionalProperties") is not False for tool in tools.values()):
+        raise RuntimeError("one or more public MCP input schemas are not closed")
+    ping_schema = tools["ping_host"].input_schema
+    count_schema = ping_schema.get("properties", {}).get("count", {})
+    if count_schema.get("maximum") != 5 or count_schema.get("minimum") != 1:
+        raise RuntimeError(f"ping_host schema lost kernel bounds: {ping_schema}")
+
     structured = result.structured_content or {}
     if result.is_error or structured.get("success") is not True:
         raise RuntimeError(f"unexpected get_router_info result: {structured}")
     data = structured.get("data")
     if not isinstance(data, Mapping) or data.get("hostname") != "mock-router":
         raise RuntimeError(f"unexpected get_router_info data: {data}")
+
+
+def _assert_invalid_host_error(result: Any) -> None:
+    structured = result.structured_content or {}
+    error = structured.get("error") if isinstance(structured, Mapping) else None
+    if not result.is_error or not isinstance(error, Mapping):
+        raise RuntimeError(f"invalid host did not return a structured tool error: {structured}")
+    if error.get("code") != "INVALID_PARAM":
+        raise RuntimeError(f"unexpected invalid-host error: {structured}")
 
 
 def _assert_clean_stderr(errlog: TextIO, *, mode: str) -> None:
@@ -74,7 +91,9 @@ async def _smoke_modern_stdio() -> None:
                 )
             listing = await client.list_tools()
             result = await client.call_tool("get_router_info", {})
+            invalid = await client.call_tool("ping_host", {"host": "bad;reboot"})
             _assert_catalog_and_result(listing, result)
+            _assert_invalid_host_error(invalid)
         _assert_clean_stderr(errlog, mode="modern")
 
 
@@ -93,7 +112,9 @@ async def _smoke_legacy_stdio() -> None:
                     )
                 listing = await session.list_tools()
                 result = await session.call_tool("get_router_info", {})
+                invalid = await session.call_tool("ping_host", {"host": "bad;reboot"})
                 _assert_catalog_and_result(listing, result)
+                _assert_invalid_host_error(invalid)
         _assert_clean_stderr(errlog, mode="legacy")
 
 
