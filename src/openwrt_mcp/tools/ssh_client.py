@@ -26,7 +26,6 @@ class _RemoteOutputLimitExceeded(RuntimeError):
     """Raised when stdout/stderr exceeds the pre-decode transport budget."""
 
 
-
 class SSHConnection:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -194,7 +193,7 @@ class SSHConnection:
             if self.settings.enable_audit_logging:
                 self._log_audit(command)
             try:
-                return await self._run_bounded(command, timeout=timeout)
+                return await self._run_bounded(command, deadline_seconds=timeout)
             except asyncio.CancelledError:
                 await self._discard_connection()
                 raise
@@ -225,7 +224,9 @@ class SSHConnection:
                 logger.error("SSH command execution failed (%s)", type(exc).__name__)
                 return "", "SSH command execution failed", 1
 
-    async def _run_bounded(self, command: str, *, timeout: int) -> tuple[str, str, int]:
+    async def _run_bounded(
+        self, command: str, *, deadline_seconds: int
+    ) -> tuple[str, str, int]:
         """Execute one command with a combined stdout/stderr byte budget.
 
         The limit is enforced while bytes are read from AsyncSSH, before UTF-8 decoding
@@ -255,7 +256,7 @@ class SSHConnection:
             return b"".join(chunks)
 
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(deadline_seconds):
                 process = await self._connection.create_process(command, encoding=None)
                 read_tasks = [
                     asyncio.create_task(read_stream(process.stdout)),
