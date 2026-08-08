@@ -35,7 +35,8 @@ def process_caller_context() -> CallerContext:
     if callable(get_euid):
         principal = f"os-uid:{get_euid()}"
     else:  # pragma: no cover - non-POSIX fallback
-        principal = f"process-user:{os.environ.get('USERNAME') or os.environ.get('USER') or 'unknown'}"
+        user = os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"
+        principal = f"process-user:{user}"
     return CallerContext(principal=principal)
 
 

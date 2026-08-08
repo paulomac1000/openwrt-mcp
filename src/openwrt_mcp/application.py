@@ -10,7 +10,12 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from openwrt_mcp.observability import CallerContext, build_meta, process_caller_context, request_context
+from openwrt_mcp.observability import (
+    CallerContext,
+    build_meta,
+    process_caller_context,
+    request_context,
+)
 from openwrt_mcp.sanitizer import sanitize_response_data
 from openwrt_mcp.validators import ValidationError
 
