@@ -29,10 +29,7 @@ async def test_official_client_lists_exact_closed_schemas_and_invokes_tools(
         assert len(names) == 19
         assert "get_router_info" in names
         assert "uci_set" not in names
-        assert all(
-            tool.input_schema.get("additionalProperties") is False
-            for tool in listing.tools
-        )
+        assert all(tool.input_schema.get("additionalProperties") is False for tool in listing.tools)
         ping = next(tool for tool in listing.tools if tool.name == "ping_host")
         expected = app.kernel.registry.get("ping_host").input_schema.as_json_schema()
         assert ping.input_schema == expected

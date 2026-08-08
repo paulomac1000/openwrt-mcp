@@ -93,8 +93,7 @@ async def test_real_router_official_mcp_read_smoke(lab_settings: Settings) -> No
             assert len(names) == 19
             assert "uci_set" not in names
             assert all(
-                tool.input_schema.get("additionalProperties") is False
-                for tool in listing.tools
+                tool.input_schema.get("additionalProperties") is False for tool in listing.tools
             )
 
             connected = await client.call_tool("test_router_connection", {})

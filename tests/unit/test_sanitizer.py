@@ -3,8 +3,7 @@ from openwrt_mcp.sanitizer import sanitize_log_line, sanitize_response_data
 
 def test_log_sanitizer_redacts_secret_ip_and_mac_boundaries() -> None:
     rendered = sanitize_log_line(
-        "auth_token=abc private_key=def password=ghi "
-        "192.0.2.10 2001:db8::1 aa:bb:cc:dd:ee:ff"
+        "auth_token=abc private_key=def password=ghi 192.0.2.10 2001:db8::1 aa:bb:cc:dd:ee:ff"
     )
     assert "abc" not in rendered
     assert "def" not in rendered

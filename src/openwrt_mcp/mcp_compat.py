@@ -45,9 +45,10 @@ def enforce_strict_input_schema(
             f"mcp=={SUPPORTED_MCP_SDK_VERSION}; found {installed}"
         )
 
-    if expected_schema.get("type") != "object" or expected_schema.get(
-        "additionalProperties"
-    ) is not False:
+    if (
+        expected_schema.get("type") != "object"
+        or expected_schema.get("additionalProperties") is not False
+    ):
         raise RuntimeError(f"kernel input schema for {name!r} is not closed")
 
     tool_manager = getattr(mcp, "_tool_manager", None)
@@ -69,9 +70,7 @@ def enforce_strict_input_schema(
     expected_properties = set(expected_schema.get("properties", {}))
     generated_properties = set(generated.get("properties", {}))
     if generated_properties != expected_properties:
-        raise RuntimeError(
-            f"MCP wrapper parameters for {name!r} disagree with the kernel schema"
-        )
+        raise RuntimeError(f"MCP wrapper parameters for {name!r} disagree with the kernel schema")
     expected_required = set(expected_schema.get("required", []))
     generated_required = set(generated.get("required", []))
     if generated_required != expected_required:

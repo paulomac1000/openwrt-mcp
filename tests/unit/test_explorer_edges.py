@@ -213,8 +213,8 @@ async def test_device_validation_network_failures_and_scan_parser(tmp_path: Path
         await service.get_device_dhcp_details(ip_address="999.999.999.999")
 
     parsed = service._parse_wifi_scan(
-        "Cell 01 - Address: 00:11:22:33:44:55\nESSID: \"one\"\nChannel: 1\n"
-        "Cell 02 - Address: 00:11:22:33:44:66\nESSID: \"two\"\nMode: Master\n"
+        'Cell 01 - Address: 00:11:22:33:44:55\nESSID: "one"\nChannel: 1\n'
+        'Cell 02 - Address: 00:11:22:33:44:66\nESSID: "two"\nMode: Master\n'
     )
     assert [item["ssid"] for item in parsed] == ["one", "two"]
 
