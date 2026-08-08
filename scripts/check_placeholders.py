@@ -36,9 +36,7 @@ def main() -> int:
                 continue
 
             if count != 1:
-                findings.append(
-                    f"{relative}: expected exactly one {_MARKER} marker, found {count}"
-                )
+                findings.append(f"{relative}: expected exactly one {_MARKER} marker, found {count}")
             tree = ast.parse(text, filename=str(relative))
             raises_not_implemented = any(
                 isinstance(node, ast.Raise)
