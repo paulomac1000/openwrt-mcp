@@ -4,7 +4,10 @@ import inspect
 
 import pytest
 
-from tests.integration import test_real_router_acceptance, test_real_router_todos
+from tests.integration import (
+    test_real_router_acceptance,
+    test_real_router_todos,
+)
 
 
 _EXPECTED_LAB_TESTS = {

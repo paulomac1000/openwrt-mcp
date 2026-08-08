@@ -40,7 +40,9 @@ class FakeConnection:
     def is_closed(self) -> bool:
         return self.closed
 
-    async def run(self, command: str, *, timeout: int) -> Result:
+    async def run(  # noqa: ASYNC109
+        self, command: str, *, timeout: int
+    ) -> Result:
         del command, timeout
         self.calls += 1
         self.entered.set()
