@@ -224,9 +224,7 @@ class SSHConnection:
                 logger.error("SSH command execution failed (%s)", type(exc).__name__)
                 return "", "SSH command execution failed", 1
 
-    async def _run_bounded(
-        self, command: str, *, deadline_seconds: int
-    ) -> tuple[str, str, int]:
+    async def _run_bounded(self, command: str, *, deadline_seconds: int) -> tuple[str, str, int]:
         """Execute one command with a combined stdout/stderr byte budget.
 
         The limit is enforced while bytes are read from AsyncSSH, before UTF-8 decoding
