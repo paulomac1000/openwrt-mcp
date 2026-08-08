@@ -40,10 +40,9 @@ class FakeConnection:
     def is_closed(self) -> bool:
         return self.closed
 
-    async def run(  # noqa: ASYNC109
-        self, command: str, *, timeout: int
-    ) -> Result:
-        del command, timeout
+    async def run(self, command: str, **kwargs: Any) -> Result:
+        del command
+        assert isinstance(kwargs.get("timeout"), int)
         self.calls += 1
         self.entered.set()
         if self.behavior == "timeout":

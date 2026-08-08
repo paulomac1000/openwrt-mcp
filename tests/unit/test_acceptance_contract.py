@@ -1,13 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import inspect
 
 import pytest
-
-from tests.integration import (
-    test_real_router_acceptance,
-    test_real_router_todos,
-)
 
 
 _EXPECTED_LAB_TESTS = {
@@ -20,16 +16,18 @@ _EXPECTED_LAB_TESTS = {
 
 
 def test_real_router_acceptance_gate_has_owned_executable_cases() -> None:
+    module = importlib.import_module("tests.integration.test_real_router_acceptance")
     discovered = {
         name
-        for name, value in vars(test_real_router_acceptance).items()
+        for name, value in vars(module).items()
         if name.startswith("test_real_router_") and inspect.iscoroutinefunction(value)
     }
     assert discovered == _EXPECTED_LAB_TESTS
 
 
 def test_only_deferred_write_profile_is_an_explicit_not_implemented_placeholder() -> None:
-    function = test_real_router_todos.test_real_router_write_authorization_and_approval_workflow
+    module = importlib.import_module("tests.integration.test_real_router_todos")
+    function = module.test_real_router_write_authorization_and_approval_workflow
     skip_reasons = [
         mark.kwargs.get("reason", "")
         for mark in getattr(function, "pytestmark", [])
