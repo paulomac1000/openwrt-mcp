@@ -23,10 +23,13 @@ def test_environment_helpers_cover_defaults_truthy_invalid_and_range(
         _int_env("NUMBER", 1, minimum=1, maximum=2)
 
 
-@pytest.mark.parametrize(("name", "value", "message"), [
-    ("OPENWRT_HOST", " ", "OPENWRT_HOST"),
-    ("OPENWRT_USER", " ", "OPENWRT_USER"),
-])
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        ("OPENWRT_HOST", " ", "OPENWRT_HOST"),
+        ("OPENWRT_USER", " ", "OPENWRT_USER"),
+    ],
+)
 def test_empty_required_identity_is_rejected(
     monkeypatch: pytest.MonkeyPatch, name: str, value: str, message: str
 ) -> None:
@@ -36,9 +39,7 @@ def test_empty_required_identity_is_rejected(
         Settings.from_env()
 
 
-def test_real_mode_rejects_key_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_real_mode_rejects_key_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     known = tmp_path / "known_hosts"
     known.write_text("host key", encoding="utf-8")
     key_directory = tmp_path / "key-directory"

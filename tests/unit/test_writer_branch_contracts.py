@@ -42,25 +42,21 @@ async def test_uci_set_and_commit_cover_success_and_failure() -> None:
     assert success_set["action"] == "uci_set_uncommitted"
 
     success_commit = await OpenWRTWriter(ScriptedSSH(("", "", 0))).uci_commit("network")
-    failed_commit = await OpenWRTWriter(ScriptedSSH(("", "commit failed", 1))).uci_commit(
-        "network"
-    )
+    failed_commit = await OpenWRTWriter(ScriptedSSH(("", "commit failed", 1))).uci_commit("network")
     assert success_commit["success"] is True
     assert failed_commit == {"success": False, "error": "commit failed"}
 
 
 @pytest.mark.asyncio
 async def test_reload_and_reboot_cover_both_result_branches() -> None:
-    assert (
-        await OpenWRTWriter(ScriptedSSH(("", "", 0))).reload_network()
-    )["success"] is True
+    assert (await OpenWRTWriter(ScriptedSSH(("", "", 0))).reload_network())["success"] is True
     assert await OpenWRTWriter(ScriptedSSH(("", "reload failed", 1))).reload_network() == {
         "success": False,
         "error": "reload failed",
     }
-    assert (
-        await OpenWRTWriter(ScriptedSSH(("", "", 0))).reboot_device()
-    )["action"] == "reboot_accepted"
+    assert (await OpenWRTWriter(ScriptedSSH(("", "", 0))).reboot_device())[
+        "action"
+    ] == "reboot_accepted"
     assert await OpenWRTWriter(ScriptedSSH(("", "reboot failed", 1))).reboot_device() == {
         "success": False,
         "error": "reboot failed",

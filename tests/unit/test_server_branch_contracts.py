@@ -11,7 +11,12 @@ from typing import Any
 import pytest
 
 import openwrt_mcp.server as server_module
-from openwrt_mcp.server import HealthState, build_application, probe_dependency, run_readiness_probe_loop
+from openwrt_mcp.server import (
+    HealthState,
+    build_application,
+    probe_dependency,
+    run_readiness_probe_loop,
+)
 from openwrt_mcp.settings import Settings
 
 
