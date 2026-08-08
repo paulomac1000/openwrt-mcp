@@ -1,10 +1,11 @@
-# ai-skills-policy-profile: trusted-ci
 name: CI
 
 on:
-  pull_request:
   push:
-    branches: [main, "agent/**"]
+    branches:
+      - main
+      - 'agent/**'
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -22,7 +23,7 @@ env:
 jobs:
   quality-artifact-container:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 25
     steps:
       - name: Checkout exact candidate revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -35,7 +36,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: paulomac1000/ai-skills
-          ref: 661ff01a5e70d58d6c94a12545b24647e52063ed
+          ref: ${{ env.AI_SKILLS_SHA }}
           path: .trusted/ai-skills
           fetch-depth: 1
           persist-credentials: false
@@ -44,7 +45,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: paulomac1000/ai-skills
-          ref: c6dc6b13b2dd40b6e087140cd071b45067d75b39
+          ref: ${{ env.WORKFLOW_AUDITOR_SHA }}
           path: .trusted/workflow-auditor
           fetch-depth: 1
           persist-credentials: false
@@ -52,7 +53,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: "3.12"
+          python-version: '3.12'
           cache: pip
           cache-dependency-path: |
             requirements-runtime.lock
@@ -113,7 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m coverage run --branch -m pytest -q -m "not integration" --junitxml=non-integration-junit.xml
-          python -m coverage report --fail-under=80
+          python -m coverage report --fail-under=90
           python -m coverage xml -o coverage.xml
 
       - name: Build exact wheel without build isolation

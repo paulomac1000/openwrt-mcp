@@ -5,6 +5,7 @@ import os
 import stat
 import sys
 import types
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ class FakeConnection:
         self.behavior = behavior
         self.closed = False
         self.waited = False
+        self.aborted = False
         self.calls = 0
         self.entered = asyncio.Event()
 
@@ -60,6 +62,13 @@ class FakeConnection:
 
     async def wait_closed(self) -> None:
         self.waited = True
+        if self.behavior == "cleanup-timeout":
+            raise TimeoutError
+        if self.behavior == "cleanup-error":
+            raise RuntimeError("close failed")
+
+    def abort(self) -> None:
+        self.aborted = True
 
 
 class Connector:
@@ -72,7 +81,7 @@ class Connector:
         return self.connections.pop(0)
 
 
-def install_asyncssh(monkeypatch: pytest.MonkeyPatch, connector: Connector) -> None:
+def install_asyncssh(monkeypatch: pytest.MonkeyPatch, connector: Any) -> None:
     module = types.SimpleNamespace(
         ConnectionLost=ConnectionLost,
         DisconnectError=DisconnectError,
@@ -101,6 +110,76 @@ def settings(tmp_path: Path) -> Settings:
         mcp_transport="stdio",
         mock_mode=False,
     )
+
+
+def test_timeout_configuration_rejects_out_of_range(tmp_path: Path) -> None:
+    client = SSHConnection(settings(tmp_path))
+    with pytest.raises(ValueError, match="between 1 and 300"):
+        client.set_timeout(0)
+    with pytest.raises(ValueError, match="between 1 and 300"):
+        with client.timeout_scope(301):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_task_local_cancel_flag_stops_before_connect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connector = Connector(FakeConnection())
+    install_asyncssh(monkeypatch, connector)
+    client = SSHConnection(settings(tmp_path))
+    client.cancel()
+    assert await client.execute("ubus call system board") == ("", "Operation cancelled", 130)
+    assert connector.calls == []
+
+
+@pytest.mark.asyncio
+async def test_insecure_dev_host_key_and_password_auth_are_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = FakeConnection()
+    connector = Connector(connection)
+    install_asyncssh(monkeypatch, connector)
+    cfg = replace(
+        settings(tmp_path),
+        openwrt_known_hosts=None,
+        insecure_skip_host_key_check=True,
+        openwrt_ssh_key=tmp_path / "missing-key",
+        openwrt_password="password-auth",
+    )
+    client = SSHConnection(cfg)
+    assert await client.connect() is True
+    assert connector.calls[0]["known_hosts"] is None
+    assert connector.calls[0]["password"] == "password-auth"
+
+
+@pytest.mark.asyncio
+async def test_connect_fails_without_auth_material(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connector = Connector(FakeConnection())
+    install_asyncssh(monkeypatch, connector)
+    cfg = replace(
+        settings(tmp_path),
+        openwrt_ssh_key=tmp_path / "missing-key",
+        openwrt_password=None,
+    )
+    assert await SSHConnection(cfg).connect() is False
+    assert connector.calls == []
+
+
+@pytest.mark.asyncio
+async def test_connect_exception_is_sanitized_and_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def failing_connect(**kwargs: Any) -> FakeConnection:
+        del kwargs
+        raise RuntimeError("password=must-not-surface")
+
+    install_asyncssh(monkeypatch, failing_connect)
+    client = SSHConnection(settings(tmp_path))
+    assert await client.connect() is False
+    assert client._connection is None
 
 
 @pytest.mark.asyncio
@@ -177,6 +256,21 @@ async def test_connection_loss_is_generic_not_replayed_and_session_is_discarded(
 
 
 @pytest.mark.asyncio
+async def test_write_connection_loss_is_ambiguous_and_not_replayed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = FakeConnection("lost")
+    connector = Connector(first)
+    install_asyncssh(monkeypatch, connector)
+    client = SSHConnection(settings(tmp_path))
+    _, error, code = await client.execute_write("uci commit network")
+    assert code == 125
+    assert error == "AMBIGUOUS_OUTCOME: SSH connection lost during write"
+    assert first.calls == 1
+    assert first.closed and first.waited
+
+
+@pytest.mark.asyncio
 async def test_unexpected_upstream_error_is_not_exposed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -203,6 +297,33 @@ async def test_closed_cached_connection_is_replaced(
     client._connection = stale
     assert await client.connect() is True
     assert client._connection is replacement
+
+
+@pytest.mark.asyncio
+async def test_cleanup_timeout_aborts_connection(tmp_path: Path) -> None:
+    client = SSHConnection(settings(tmp_path))
+    connection = FakeConnection("cleanup-timeout")
+    client._connection = connection
+    await client.close()
+    assert connection.closed and connection.waited and connection.aborted
+    assert client._connection is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_error_still_detaches_connection(tmp_path: Path) -> None:
+    client = SSHConnection(settings(tmp_path))
+    connection = FakeConnection("cleanup-error")
+    client._connection = connection
+    await client.close()
+    assert connection.closed and connection.waited
+    assert client._connection is None
+
+
+@pytest.mark.asyncio
+async def test_close_without_connection_is_idempotent(tmp_path: Path) -> None:
+    client = SSHConnection(settings(tmp_path))
+    await client.close()
+    assert client._connection is None
 
 
 def test_audit_log_is_private_and_redacts_network_identifiers(tmp_path: Path) -> None:
