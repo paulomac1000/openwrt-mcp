@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from openwrt_mcp.validators import SecurityValidator, ValidationError
+
 
 class MockSSHConnection:
     @contextmanager
@@ -94,11 +96,12 @@ class MockOpenWRTExplorer:
         }
 
     async def read_uci_config(self, config_name: str) -> dict[str, Any]:
+        config = SecurityValidator.validate_readable_uci_config(config_name)
         return {
             "success": True,
-            "config_name": config_name,
+            "config_name": config,
             "entries_count": 1,
-            "sample": {f"{config_name}.mock": "section"},
+            "sample": {f"{config}.mock": "section"},
         }
 
     async def list_installed_packages(self) -> dict[str, Any]:
@@ -127,6 +130,8 @@ class MockOpenWRTExplorer:
         search_term: str,
         max_results: int,
     ) -> dict[str, Any]:
+        if not SecurityValidator.is_safe_search_term(search_term):
+            raise ValidationError("Unsafe or invalid search phrase")
         return {
             "success": True,
             "search_term": search_term,
@@ -160,6 +165,8 @@ class MockOpenWRTExplorer:
         return {"success": True, "static_leases_count": 0, "leases": []}
 
     async def search_dhcp_logs(self, search_term: str) -> dict[str, Any]:
+        if not SecurityValidator.is_safe_search_term(search_term):
+            raise ValidationError("Unsafe or invalid DHCP search phrase")
         return {
             "success": True,
             "search_term": search_term,
@@ -178,9 +185,10 @@ class MockOpenWRTExplorer:
         mac_address: str | None,
         ip_address: str | None,
     ) -> dict[str, Any]:
+        identifier = SecurityValidator.validate_device_identifier(mac_address, ip_address)
         return {
             "success": True,
-            "device_identifier": mac_address or ip_address,
+            "device_identifier": identifier,
             "current_lease": None,
             "static_reservation": None,
             "has_static_reservation": False,
@@ -217,17 +225,19 @@ class MockOpenWRTExplorer:
         }
 
     async def ping_host(self, host: str, count: int) -> dict[str, Any]:
+        validated = SecurityValidator.validate_host_or_address(host)
         return {
             "success": True,
-            "host": host,
+            "host": validated,
             "output": f"mock ping count={count}",
             "reachable": True,
         }
 
     async def traceroute_host(self, host: str) -> dict[str, Any]:
+        validated = SecurityValidator.validate_host_or_address(host)
         return {
             "success": True,
-            "host": host,
+            "host": validated,
             "output": "1 192.0.2.1 1.0 ms",
         }
 
@@ -236,17 +246,22 @@ class MockOpenWRTExplorer:
         host: str,
         dns_server: str,
     ) -> dict[str, Any]:
+        validated_host = SecurityValidator.validate_host_or_address(host)
+        validated_dns = SecurityValidator.validate_host_or_address(dns_server)
         return {
             "success": True,
-            "host": host,
+            "host": validated_host,
             "resolved": True,
-            "output": f"Name: {host}\nAddress: 192.0.2.200\nServer: {dns_server}",
+            "output": (
+                f"Name: {validated_host}\nAddress: 192.0.2.200\nServer: {validated_dns}"
+            ),
         }
 
     async def wifi_scan(self, radio: str) -> dict[str, Any]:
+        validated_radio = SecurityValidator.validate_interface_name(radio)
         return {
             "success": True,
-            "radio": radio,
+            "radio": validated_radio,
             "networks_found": 1,
             "networks": [
                 {
