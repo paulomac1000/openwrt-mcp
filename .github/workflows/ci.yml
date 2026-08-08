@@ -141,7 +141,7 @@ jobs:
           set -euo pipefail
           image="openwrt-mcp:ci-$CANDIDATE_SHA"
           docker image inspect "$image" > image-inspect.json
-          test "$(docker image inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$image")" = "$CANDIDATE_SHA"
+          test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$CANDIDATE_SHA"
           docker save "$image" | gzip -n > image.tar.gz
           sha256sum image.tar.gz > image.sha256
           python - <<'PY'
