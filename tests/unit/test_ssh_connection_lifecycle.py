@@ -24,10 +24,30 @@ class DisconnectError(Exception):
     pass
 
 
-class Result:
-    stdout = "ok"
-    stderr = ""
-    exit_status = 0
+class FakeReader:
+    def __init__(self, payload: bytes = b"") -> None:
+        self.payload = payload
+        self.consumed = False
+
+    async def read(self, _: int) -> bytes:
+        if self.consumed:
+            return b""
+        self.consumed = True
+        return self.payload
+
+
+class FakeProcess:
+    def __init__(self) -> None:
+        self.stdout = FakeReader(b"ok")
+        self.stderr = FakeReader()
+        self.exit_status = 0
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        return None
 
 
 class FakeConnection:
@@ -42,9 +62,9 @@ class FakeConnection:
     def is_closed(self) -> bool:
         return self.closed
 
-    async def run(self, command: str, **kwargs: Any) -> Result:
+    async def create_process(self, command: str, **kwargs: Any) -> FakeProcess:
         del command
-        assert isinstance(kwargs.get("timeout"), int)
+        assert kwargs.get("encoding") is None
         self.calls += 1
         self.entered.set()
         if self.behavior == "timeout":
@@ -55,7 +75,7 @@ class FakeConnection:
             raise RuntimeError("password=super-secret")
         if self.behavior == "slow":
             await asyncio.sleep(60)
-        return Result()
+        return FakeProcess()
 
     def close(self) -> None:
         self.closed = True
@@ -179,7 +199,7 @@ async def test_connect_exception_is_sanitized_and_fails_closed(
     install_asyncssh(monkeypatch, failing_connect)
     client = SSHConnection(settings(tmp_path))
     assert await client.connect() is False
-    assert client._connection is None
+    assert client._connection is None  # noqa: SLF001
 
 
 @pytest.mark.asyncio
@@ -210,7 +230,7 @@ async def test_timeout_discards_session_and_followup_reconnects(
     _, error, code = await client.execute("ubus call system board", timeout_seconds=1)
     assert (code, error) == (124, "Timeout after 1s")
     assert first.closed and first.waited
-    assert client._connection is None
+    assert client._connection is None  # noqa: SLF001
 
     stdout, _, code = await client.execute("ubus call system board")
     assert (stdout, code) == ("ok", 0)
@@ -233,7 +253,7 @@ async def test_task_cancellation_discards_session_and_re_raises(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert first.closed and first.waited
-    assert client._connection is None
+    assert client._connection is None  # noqa: SLF001
 
     assert (await client.execute("ubus call system board"))[2] == 0
     assert len(connector.calls) == 2
@@ -294,43 +314,45 @@ async def test_closed_cached_connection_is_replaced(
     connector = Connector(replacement)
     install_asyncssh(monkeypatch, connector)
     client = SSHConnection(settings(tmp_path))
-    client._connection = stale
+    client._connection = stale  # noqa: SLF001
     assert await client.connect() is True
-    assert client._connection is replacement
+    assert client._connection is replacement  # noqa: SLF001
 
 
 @pytest.mark.asyncio
 async def test_cleanup_timeout_aborts_connection(tmp_path: Path) -> None:
     client = SSHConnection(settings(tmp_path))
     connection = FakeConnection("cleanup-timeout")
-    client._connection = connection
+    client._connection = connection  # noqa: SLF001
     await client.close()
     assert connection.closed and connection.waited and connection.aborted
-    assert client._connection is None
+    assert client._connection is None  # noqa: SLF001
 
 
 @pytest.mark.asyncio
 async def test_cleanup_error_still_detaches_connection(tmp_path: Path) -> None:
     client = SSHConnection(settings(tmp_path))
     connection = FakeConnection("cleanup-error")
-    client._connection = connection
+    client._connection = connection  # noqa: SLF001
     await client.close()
     assert connection.closed and connection.waited
-    assert client._connection is None
+    assert client._connection is None  # noqa: SLF001
 
 
 @pytest.mark.asyncio
 async def test_close_without_connection_is_idempotent(tmp_path: Path) -> None:
     client = SSHConnection(settings(tmp_path))
     await client.close()
-    assert client._connection is None
+    assert client._connection is None  # noqa: SLF001
 
 
 def test_audit_log_is_private_and_redacts_network_identifiers(tmp_path: Path) -> None:
     cfg = settings(tmp_path)
     client = SSHConnection(cfg)
     with request_context("req", caller=CallerContext("os-uid:4242")):
-        client._log_audit("ping -c 1 192.0.2.9 # aa:bb:cc:dd:ee:ff auth_token=abc")
+        client._log_audit(  # noqa: SLF001
+            "ping -c 1 192.0.2.9 # aa:bb:cc:dd:ee:ff auth_token=abc"
+        )
     rendered = cfg.audit_log_file.read_text(encoding="utf-8")
     assert "192.0.2.9" not in rendered
     assert "aa:bb:cc:dd:ee:ff" not in rendered
@@ -347,5 +369,5 @@ def test_audit_log_refuses_symlink_target_when_supported(tmp_path: Path) -> None
     link.symlink_to(target)
     cfg = settings(tmp_path)
     object.__setattr__(cfg, "audit_log_file", link)
-    SSHConnection(cfg)._log_audit("ubus call system board")
+    SSHConnection(cfg)._log_audit("ubus call system board")  # noqa: SLF001
     assert target.read_text(encoding="utf-8") == "sentinel"
