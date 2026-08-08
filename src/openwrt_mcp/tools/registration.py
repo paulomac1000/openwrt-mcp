@@ -285,7 +285,6 @@ def build_invocation_kernel(
     )
 
 
-
 def _attach_and_register(
     mcp: Any,
     fn: Callable[..., Any],
