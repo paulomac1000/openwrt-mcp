@@ -1,8 +1,3 @@
-from __future__ import annotations
-
-import inspect
-
-
 _EXPECTED_LAB_TESTS = {
     "test_real_router_wrong_host_key_never_opens_command_session",
     "test_real_router_official_mcp_read_smoke",
@@ -12,7 +7,7 @@ _EXPECTED_LAB_TESTS = {
 }
 
 
-def _load(module_name: str) -> object:
+def _load(module_name: str):
     return __import__(module_name, fromlist=["*"])
 
 
@@ -21,14 +16,17 @@ def test_real_router_acceptance_gate_has_owned_executable_cases() -> None:
     discovered = {
         name
         for name, value in vars(module).items()
-        if name.startswith("test_real_router_") and inspect.iscoroutinefunction(value)
+        if name.startswith("test_real_router_")
+        and callable(value)
+        and hasattr(value, "__code__")
+        and bool(value.__code__.co_flags & 0x80)
     }
     assert discovered == _EXPECTED_LAB_TESTS
 
 
 def test_only_deferred_write_profile_is_an_explicit_not_implemented_placeholder() -> None:
     module = _load("tests.integration.test_real_router_todos")
-    function = getattr(module, "test_real_router_write_authorization_and_approval_workflow")
+    function = module.test_real_router_write_authorization_and_approval_workflow
     skip_reasons = [
         mark.kwargs.get("reason", "")
         for mark in getattr(function, "pytestmark", [])
