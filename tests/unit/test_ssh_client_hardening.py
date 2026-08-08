@@ -157,9 +157,7 @@ async def test_timeout_override_is_task_local(
     client = SSHConnection(settings)
     observed: list[tuple[str, int]] = []
 
-    async def bounded(
-        command: str, *, deadline_seconds: int
-    ) -> tuple[str, str, int]:
+    async def bounded(command: str, *, deadline_seconds: int) -> tuple[str, str, int]:
         observed.append((command, deadline_seconds))
         return "ok", "", 0
 
