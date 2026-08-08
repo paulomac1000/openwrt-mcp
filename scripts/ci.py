@@ -46,6 +46,8 @@ def main() -> int:
         env=environment,
     )
     run(python, "-m", "coverage", "report", "--fail-under=90", env=environment)
+    run(python, "-m", "coverage", "xml", "-o", "coverage.xml", env=environment)
+    run(python, "scripts/check_coverage_thresholds.py", "coverage.xml", env=environment)
     mock_environment = dict(environment)
     if importlib.util.find_spec("mcp") is None:
         mock_environment["PYTHONPATH"] = os.pathsep.join(
