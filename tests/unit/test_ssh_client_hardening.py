@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from openwrt_mcp.settings import Settings
-from openwrt_mcp.tools.ssh_client import SSHConnection, _MAX_CAPTURE_BYTES
+from openwrt_mcp.tools.ssh_client import _MAX_CAPTURE_BYTES, SSHConnection
 
 
 class ConnectionLost(Exception):
@@ -89,6 +89,7 @@ class FakeConnection:
             raise ConnectionLost("link dropped with secret=password123")
         self.active += 1
         self.max_active = max(self.max_active, self.active)
+
         def finished() -> None:
             self.active -= 1
 
@@ -156,8 +157,10 @@ async def test_timeout_override_is_task_local(
     client = SSHConnection(settings)
     observed: list[tuple[str, int]] = []
 
-    async def bounded(command: str, *, timeout: int) -> tuple[str, str, int]:
-        observed.append((command, timeout))
+    async def bounded(
+        command: str, *, deadline_seconds: int
+    ) -> tuple[str, str, int]:
+        observed.append((command, deadline_seconds))
         return "ok", "", 0
 
     monkeypatch.setattr(client, "_run_bounded", bounded)
@@ -317,7 +320,8 @@ async def test_audit_log_redacts_secret_and_ip_and_is_private(
     audit = await asyncio.to_thread(path.read_text, encoding="utf-8")
     assert "192.0.2.123" not in audit
     assert "<REDACTED>" in audit
-    assert path.stat().st_mode & 0o777 == 0o600
+    stat_result = await asyncio.to_thread(path.stat)
+    assert stat_result.st_mode & 0o777 == 0o600
 
 
 async def test_audit_log_refuses_symlink_target(
