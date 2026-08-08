@@ -18,6 +18,13 @@ from openwrt_mcp.validators import SecurityValidator
 
 logger = logging.getLogger("openwrt-mcp.ssh")
 _CLOSE_TIMEOUT_SECONDS = 2.0
+_MAX_CAPTURE_BYTES = 1_048_576
+_READ_CHUNK_BYTES = 16_384
+
+
+class _RemoteOutputLimitExceeded(RuntimeError):
+    """Raised when stdout/stderr exceeds the pre-decode transport budget."""
+
 
 
 class SSHConnection:
@@ -138,24 +145,25 @@ class SSHConnection:
         )
 
     async def _discard_connection(self) -> None:
-        """Detach and close the current SSH session after an ambiguous interruption."""
-        connection = self._connection
-        self._connection = None
-        if connection is None:
-            return
-        try:
-            connection.close()
-            await asyncio.wait_for(
-                connection.wait_closed(),
-                timeout=_CLOSE_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            abort = getattr(connection, "abort", None)
-            if callable(abort):
-                abort()
-            logger.warning("SSH connection cleanup timed out")
-        except Exception as exc:
-            logger.warning("SSH connection cleanup failed (%s)", type(exc).__name__)
+        """Atomically detach and close the current SSH session."""
+        async with self._connect_lock:
+            connection = self._connection
+            self._connection = None
+            if connection is None:
+                return
+            try:
+                connection.close()
+                await asyncio.wait_for(
+                    connection.wait_closed(),
+                    timeout=_CLOSE_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                abort = getattr(connection, "abort", None)
+                if callable(abort):
+                    abort()
+                logger.warning("SSH connection cleanup timed out")
+            except Exception as exc:
+                logger.warning("SSH connection cleanup failed (%s)", type(exc).__name__)
 
     async def _execute_once(
         self,
@@ -178,20 +186,21 @@ class SSHConnection:
             return "", "Operation cancelled", 130
 
         async with self._command_lock:
-            if self._connection is None and not await self.connect():
+            # connect() reuses a live session and replaces a stale/closed one. Calling it
+            # unconditionally prevents dispatch through a cached object which became closed
+            # between invocations.
+            if not await self.connect():
                 return "", "No SSH connection", 1
             if self.settings.enable_audit_logging:
                 self._log_audit(command)
             try:
-                result = await self._connection.run(command, timeout=timeout)
-                return (
-                    str(result.stdout),
-                    str(result.stderr),
-                    int(result.exit_status),
-                )
+                return await self._run_bounded(command, timeout=timeout)
             except asyncio.CancelledError:
                 await self._discard_connection()
                 raise
+            except _RemoteOutputLimitExceeded:
+                await self._discard_connection()
+                return "", f"Remote output exceeded {_MAX_CAPTURE_BYTES}-byte safety limit", 126
             except TimeoutError:
                 await self._discard_connection()
                 return "", f"Timeout after {timeout}s", 124
@@ -216,6 +225,68 @@ class SSHConnection:
                 logger.error("SSH command execution failed (%s)", type(exc).__name__)
                 return "", "SSH command execution failed", 1
 
+    async def _run_bounded(self, command: str, *, timeout: int) -> tuple[str, str, int]:
+        """Execute one command with a combined stdout/stderr byte budget.
+
+        The limit is enforced while bytes are read from AsyncSSH, before UTF-8 decoding
+        and before the kernel serializes the response. This prevents an allowed remote
+        command from forcing an unbounded in-memory capture.
+        """
+        process: Any | None = None
+        read_tasks: list[asyncio.Task[bytes]] = []
+        captured = 0
+
+        async def read_stream(reader: Any) -> bytes:
+            nonlocal captured
+            chunks: list[bytes] = []
+            while True:
+                chunk = await reader.read(_READ_CHUNK_BYTES)
+                if not chunk:
+                    break
+                data = (
+                    chunk.encode("utf-8", errors="replace")
+                    if isinstance(chunk, str)
+                    else bytes(chunk)
+                )
+                captured += len(data)
+                if captured > _MAX_CAPTURE_BYTES:
+                    raise _RemoteOutputLimitExceeded
+                chunks.append(data)
+            return b"".join(chunks)
+
+        try:
+            async with asyncio.timeout(timeout):
+                process = await self._connection.create_process(command, encoding=None)
+                read_tasks = [
+                    asyncio.create_task(read_stream(process.stdout)),
+                    asyncio.create_task(read_stream(process.stderr)),
+                ]
+                stdout, stderr = await asyncio.gather(*read_tasks)
+                await process.wait_closed()
+        except BaseException:
+            for task in read_tasks:
+                if not task.done():
+                    task.cancel()
+            if read_tasks:
+                await asyncio.gather(*read_tasks, return_exceptions=True)
+            if process is not None:
+                try:
+                    process.close()
+                    await asyncio.wait_for(process.wait_closed(), timeout=_CLOSE_TIMEOUT_SECONDS)
+                except BaseException:
+                    # The enclosing caller also discards the SSH connection for all
+                    # interruption/overflow cases, so process cleanup is best effort here.
+                    pass
+            raise
+
+        assert process is not None
+        exit_status = process.exit_status
+        return (
+            stdout.decode("utf-8", errors="replace"),
+            stderr.decode("utf-8", errors="replace"),
+            int(exit_status) if exit_status is not None else 255,
+        )
+
     def _log_audit(self, command: str) -> None:
         caller = get_caller_context()
         entry = (
@@ -237,5 +308,7 @@ class SSHConnection:
             logger.error("Audit log write failed (%s)", type(exc).__name__)
 
     async def close(self) -> None:
-        async with self._connect_lock:
+        # Graceful shutdown waits for the serialized command boundary. Interruption
+        # paths call _discard_connection() directly while already holding this lock.
+        async with self._command_lock:
             await self._discard_connection()

@@ -23,6 +23,7 @@ def main() -> int:
     run(python, "-m", "compileall", "-q", "src", "tests", "scripts", env=environment)
     run(python, "scripts/check_ai_skills_lock.py", env=environment)
     run(python, "scripts/check_workflows.py", env=environment)
+    run(python, "scripts/check_placeholders.py", env=environment)
     run(
         python,
         "scripts/validate_docs.py",

@@ -76,7 +76,7 @@ Run the container under an MCP host that attaches to its stdio. Mount the privat
 
 Every capability has a closed input schema owned by the invocation kernel. The kernel rejects missing fields, unknown fields, invalid types, and out-of-range values before acquiring the target lock or performing SSH I/O. The MCP adapter publishes that exact kernel schema, including length and numeric limits; SDK-generated wrapper metadata is checked for field/required parity before registration completes. Deadlines are server-owned and are not public tool parameters.
 
-All non-concurrent-safe operations are serialized for the complete router target unless a narrower concurrency group is explicitly reviewed. Cancellation, timeout, and connection loss invalidate the current SSH session before a later request may reconnect; commands are never automatically replayed after an ambiguous disconnect.
+All non-concurrent-safe operations are serialized for the complete router target unless a narrower concurrency group is explicitly reviewed. Cancellation, timeout, connection loss, or a remote-output overflow invalidates the current SSH session before a later request may reconnect; commands are never automatically replayed after an ambiguous disconnect. Raw SSH stdout and stderr share a 1 MiB capture budget enforced while bytes are read, before decoding or MCP response serialization.
 
 ## Production acceptance
 

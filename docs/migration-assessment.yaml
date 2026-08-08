@@ -44,7 +44,8 @@ implemented:
   - inactive write and destructive capabilities are not registered and do not claim server-enforced confirmation
   - real-mode configuration fails fast for missing known-hosts or missing SSH authentication material
   - SSH host-key verification fails closed outside explicit non-production mock/insecure modes
-  - command timeout, cancellation, and connection loss invalidate the SSH session before a later reconnect
+  - command timeout, cancellation, connection loss, and remote-output overflow invalidate the SSH session before a later reconnect
+  - raw SSH stdout/stderr share a 1 MiB pre-decode capture budget before kernel response serialization
   - reads and writes are never automatically replayed after ambiguous connection loss
   - audit output redacts secrets, IPv4/IPv6 addresses and MAC addresses; audit files use no-follow plus mode 0600 where supported
   - exact wheel smoke uses real official-client stdio subprocesses for modern and legacy protocol revisions
@@ -58,6 +59,7 @@ implemented:
   - candidate workflows are independently audited as a complete governed set by an immutable profile-aware auditor revision
   - diagnostic evidence and the minimal protected-release payload are uploaded as separate artifacts
   - real-router acceptance tests are executable and environment-gated rather than empty TODO bodies
+  - CI enforces that the future write-profile test is the only owned NOT_IMPLEMENTED placeholder
 not_claimed:
   - L2 remote principal authentication, capability authorization, or target-binding enforcement
   - stable router identity enrollment or target revalidation
