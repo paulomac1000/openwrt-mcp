@@ -32,12 +32,12 @@ def process_caller_context() -> CallerContext:
     """Resolve the L1 caller from the OS process identity, never router identity."""
 
     get_euid = getattr(os, "geteuid", None)
-    if callable(get_euid):
-        principal = f"os-uid:{get_euid()}"
-    else:  # pragma: no cover - non-POSIX fallback
-        user = os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"
-        principal = f"process-user:{user}"
-    return CallerContext(principal=principal)
+    if not callable(get_euid):
+        raise RuntimeError(
+            "L1 caller identity requires a POSIX host with os.geteuid(); "
+            "non-POSIX hosts are not supported by this profile"
+        )
+    return CallerContext(principal=f"os-uid:{get_euid()}")
 
 
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
@@ -105,7 +105,7 @@ def build_meta(
     caller = get_caller_context()
     return {
         "request_id": get_request_id(),
-        "caller": {"principal": caller.principal, "boundary": caller.boundary},
+        "caller_boundary": caller.boundary,
         "duration_ms": int((time.monotonic() - start_time) * 1000),
         "tool_version": TOOLS_VERSION,
         "cached": cached,

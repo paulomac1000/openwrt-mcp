@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from openwrt_mcp.application import CapabilityManifest, CapabilityRegistry, InvocationKernel
 from openwrt_mcp.observability import (
@@ -54,7 +57,7 @@ def _settings(tmp_path: Path) -> Settings:
 
 def test_process_caller_is_explicit_and_context_resets() -> None:
     process = process_caller_context()
-    assert process.principal.startswith(("os-uid:", "process-user:"))
+    assert process.principal.startswith("os-uid:")
     assert process.boundary == "local-process"
     assert get_caller_context().principal == "system:internal"
 
@@ -81,7 +84,7 @@ async def test_caller_context_does_not_cross_tasks() -> None:
     }
 
 
-async def test_kernel_meta_records_caller_separately_from_target() -> None:
+async def test_kernel_meta_exposes_boundary_not_raw_caller_principal() -> None:
     async def operation() -> dict[str, Any]:
         return {"success": True}
 
@@ -95,11 +98,29 @@ async def test_kernel_meta_records_caller_separately_from_target() -> None:
     result = await kernel.invoke("probe", {}, caller=CallerContext("os-uid:2000"))
     assert result.success is True
     assert result.meta is not None
-    assert result.meta["caller"] == {
-        "principal": "os-uid:2000",
-        "boundary": "local-process",
-    }
+    assert result.meta["caller_boundary"] == "local-process"
+    assert "caller" not in result.meta
+    assert "os-uid:2000" not in str(result.meta)
     assert result.meta["target"] == "ssh:root@router.local:22"
+
+
+def test_kernel_startup_fails_closed_without_posix_process_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def operation() -> dict[str, Any]:
+        return {"success": True}
+
+    process_caller_context.cache_clear()
+    monkeypatch.delattr(os, "geteuid", raising=False)
+    try:
+        with pytest.raises(RuntimeError, match="POSIX host"):
+            InvocationKernel(
+                registry=CapabilityRegistry({"probe": _manifest()}),
+                operations={"probe": operation},
+                target_identity="ssh:root@router.local:22",
+            )
+    finally:
+        process_caller_context.cache_clear()
 
 
 def test_ssh_audit_records_caller_and_target_separately(tmp_path: Path) -> None:

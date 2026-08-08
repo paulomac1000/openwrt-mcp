@@ -47,6 +47,10 @@ Tool callers cannot override timeouts. Each manifest owns a deadline that includ
 
 The official MCP SDK is a required runtime dependency. The adapter has no production fallback for a missing SDK. Successful calls return `CallToolResult` with structured content. Controlled tool failures return sanitized `CallToolResult(is_error=true)` results rather than protocol errors.
 
+## Caller identity and host platform
+
+The supported L1 host runtime is POSIX. Caller identity is derived from `os.geteuid()` and retained in request context, telemetry, and SSH audit records. Model-facing `_meta` exposes only `caller_boundary: local-process`; it never exposes the raw OS UID. If a stable POSIX process identity is unavailable, startup fails closed rather than trusting environment variables such as `USER` or `USERNAME`.
+
 ## SSH identity and write state
 
 Outside deterministic mock mode, `OPENWRT_KNOWN_HOSTS` is required. The explicit insecure escape hatch is development-only and emits a warning. Dormant write-domain code also refuses write execution without host-key verification and never retries an ambiguous write after connection loss.

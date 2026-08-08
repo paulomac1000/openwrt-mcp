@@ -12,6 +12,7 @@ This is intentionally an **L1 local read-only stdio** profile. It does not claim
 - 5 historical write/destructive capability names retained as inactive metadata
 - Loopback-only HTTP liveness/readiness endpoint on port 9094
 - Verified SSH host identity required outside mock mode
+- POSIX host runtime required for L1 caller identity (`os.geteuid()`); non-POSIX startup fails closed
 
 REST and legacy HTTP+SSE are intentionally not part of this profile. This avoids sharing `asyncio` locks and an AsyncSSH connection between independent event loops or threads.
 
