@@ -3,27 +3,26 @@ project: openwrt-mcp
 profile: l1-local-read-only-stdio
 assessed_revision: candidate-tree
 standards_revision: 661ff01a5e70d58d6c94a12545b24647e52063ed
-status: draft
+status: production-candidate
 evidence_binding:
   model: >-
-    This file assesses the candidate tree and the evidence classes required for it.
-    Exact commit SHA, workflow run ID, and artifact digests are bound externally by
-    provider-backed GitHub Actions records and the pull-request evidence summary,
-    avoiding a self-referential SHA inside the candidate commit.
+    This file assesses the candidate tree and required evidence classes. Exact commit
+    SHA, workflow run ID, and artifact digests are bound externally by provider-backed
+    GitHub Actions records and the pull-request evidence summary, avoiding a
+    self-referential SHA inside the candidate commit.
   recurring_provider_evidence:
     - exact-revision hosted CI with official MCP SDK 2.0.0
     - exact-wheel modern and legacy stdio subprocess smoke outside the checkout
     - exact-container modern and legacy stdio subprocess smoke
-    - Ruff, mypy strict, Bandit, pip-audit, branch coverage, wheel and image checks
+    - Ruff, mypy strict, Bandit, pip-audit, branch coverage >= 90%, wheel and image checks
     - retained JUnit execution counts and artifact digests
 baseline_policy:
   pinned_revision_reason: >-
     661ff01a5e70d58d6c94a12545b24647e52063ed remains the last trusted immutable
     baseline adopted by this branch. The latest unified-contract candidate observed
-    during this assessment is f26d0c6ce298d4bd818546b03ab9e32e7686c053; it is not
-    adopted because its exact-head workflow set is still red and its capability
-    manifest machine schema and normative reference remain contradictory. Pinning a
-    red, contradictory candidate would turn compliance into an unverifiable claim.
+    during this assessment is c5ba4091cd8a3043fe4ba9715a3bda96d62a05e4; it is not
+    adopted because its exact-head workflow set is red and its capability-manifest
+    machine schema and normative reference remain contradictory.
   workflow_auditor_revision: c6dc6b13b2dd40b6e087140cd071b45067d75b39
   workflow_auditor_scope: >-
     Used narrowly as an immutable profile-aware GitHub Actions policy auditor over the
@@ -36,33 +35,40 @@ baseline_policy:
     agree.
 implemented:
   - official MCP Python SDK 2.0.0 is the required runtime dependency
+  - supported host interpreter is POSIX CPython 3.12.x; unsupported host identity fails closed
   - stdio is the only MCP invocation transport in the supported profile
   - the invocation kernel owns closed argument validation, deadlines, target serialization, and final response byte limits
+  - the MCP adapter publishes the exact kernel input schema after wrapper field/required parity checks
+  - controlled MCP failures carry sanitized structured error content; unexpected operation TypeError/ValueError map to INTERNAL
   - all active capability manifests default to retryable=false, idempotent=false, reversible=false unless operation-specific evidence is added
   - inactive write and destructive capabilities are not registered and do not claim server-enforced confirmation
+  - real-mode configuration fails fast for missing known-hosts or missing SSH authentication material
   - SSH host-key verification fails closed outside explicit non-production mock/insecure modes
-  - connection loss never causes automatic command replay; ambiguous writes remain fail-closed
+  - command timeout, cancellation, and connection loss invalidate the SSH session before a later reconnect
+  - reads and writes are never automatically replayed after ambiguous connection loss
+  - audit output redacts secrets, IPv4/IPv6 addresses and MAC addresses; audit files use no-follow plus mode 0600 where supported
   - exact wheel smoke uses real official-client stdio subprocesses for modern and legacy protocol revisions
+  - exact artifact smoke verifies closed schemas, numeric bounds, success mapping, and structured controlled errors
   - CI consumes reviewed committed hashed locks and builds/smoke-tests the container exactly once
-  - protected publishing promotes the exact CI-exported image archive without source checkout, rebuild, or image execution
-  - L1 requests carry an immutable POSIX process principal that is distinct from router target identity in internal request context and SSH audit records
+  - container runtime is non-root and includes graceful stop/liveness metadata
+  - protected publishing promotes the exact CI-exported image archive without source checkout or rebuild
+  - L1 requests carry an immutable POSIX process principal distinct from router target identity in internal context/audit
   - model-facing response metadata exposes only caller_boundary and never the raw OS UID
-  - non-POSIX hosts fail closed because this L1 profile does not trust USER or USERNAME as a security principal
-  - MCP 2.0.0 private registration internals are isolated in a version-bounded compatibility adapter with fail-closed regression coverage
-  - candidate workflows are independently audited as a complete governed set by an immutable profile-aware auditor revision in addition to the stable baseline checks
+  - MCP private registration internals are isolated in a version-bounded fail-closed compatibility adapter
+  - candidate workflows are independently audited as a complete governed set by an immutable profile-aware auditor revision
   - diagnostic evidence and the minimal protected-release payload are uploaded as separate artifacts
+  - real-router acceptance tests are executable and environment-gated rather than empty TODO bodies
 not_claimed:
   - L2 remote principal authentication, capability authorization, or target-binding enforcement
   - stable router identity enrollment or target revalidation
   - server-enforced approval records for write capabilities
-  - Windows or other non-POSIX host support for L1 process-principal derivation
-  - compliance with the red ai-skills f26d0c6ce298d4bd818546b03ab9e32e7686c053 candidate manifest/evidence contract
-  - production verification against a real OpenWRT router
+  - Windows or other non-POSIX host support
+  - Python 3.13 or 3.14 runtime support
+  - compliance with the red ai-skills c5ba4091cd8a3043fe4ba9715a3bda96d62a05e4 candidate contract
+  - production verification against a real OpenWRT router until the lab record is green
 pending_evidence:
-  - real-router host-key mismatch proving no command dispatch after identity failure
-  - real-router AsyncSSH cancellation and timeout cleanup without orphaned command execution
-  - bounded-output behavior against real OpenWRT command responses
+  - real-router lab record with 5 passed, 0 failed, 0 skipped for tests/integration/test_real_router_acceptance.py
   - independent latest-format adoption assessment after a green unified ai-skills baseline exists
 deferred_non_profile_evidence:
-  - real-router write approval/authentication/authorization workflow if a future profile activates write capabilities
+  - NOT_IMPLEMENTED real-router write authorization/approval workflow if a future profile activates write capabilities
 waivers: []

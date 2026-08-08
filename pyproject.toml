@@ -7,7 +7,7 @@ name = "openwrt-mcp"
 dynamic = ["version"]
 description = "Hardened read-only MCP server for OpenWRT diagnostics"
 readme = "README.md"
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "mcp==2.0.0",
   "asyncssh==2.24.0",
@@ -47,6 +47,7 @@ testpaths = ["tests"]
 markers = [
   "unit: deterministic unit tests",
   "integration: SDK or real-dependency integration tests",
+  "lab: requires an explicitly enabled isolated real OpenWRT laboratory",
   "e2e: end-to-end application tests",
 ]
 

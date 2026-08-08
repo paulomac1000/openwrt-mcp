@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import shlex
 
@@ -13,11 +14,29 @@ class ValidationError(Exception):
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9._@\[\]-]{1,128}$")
 _CONFIG = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _INTERFACE = re.compile(r"^[a-z][a-z0-9._-]{0,14}$")
+_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$")
+_MAC = re.compile(r"^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$")
 _DANGEROUS_VALUE = re.compile(r"[\x00-\x1f\x7f;&|`$<>\\]")
 
 
 class SecurityValidator:
-    """Allowlist validator for commands executed on the router."""
+    """Allowlist validator for values and commands executed on the router."""
+
+    READABLE_UCI_CONFIGS = frozenset(
+        {
+            "dhcp",
+            "network",
+            "wireless",
+            "firewall",
+            "system",
+            "dropbear",
+            "luci",
+            "uhttpd",
+            "rpcd",
+            "ucitrack",
+            "ubootenv",
+        }
+    )
 
     ALLOWED_PATTERNS = [
         r"^ubus call system board$",
@@ -57,6 +76,31 @@ class SecurityValidator:
         return False, "Unsupported read command"
 
     @classmethod
+    def validate_host_or_address(cls, value: str) -> str:
+        if not isinstance(value, str) or not _HOST.fullmatch(value):
+            raise ValidationError("Invalid host or address")
+        return value
+
+    @classmethod
+    def validate_device_identifier(
+        cls,
+        mac_address: str | None,
+        ip_address: str | None,
+    ) -> str:
+        if not mac_address and not ip_address:
+            raise ValidationError("Provide device MAC or IP")
+        if mac_address:
+            normalized = mac_address.lower().replace("-", ":")
+            if not _MAC.fullmatch(normalized):
+                raise ValidationError("Invalid MAC address format")
+            return normalized
+        assert ip_address is not None
+        try:
+            return str(ipaddress.ip_address(ip_address))
+        except ValueError as exc:
+            raise ValidationError("Invalid IP address format") from exc
+
+    @classmethod
     def validate_interface_name(cls, name: str) -> str:
         if not isinstance(name, str) or not _INTERFACE.fullmatch(name):
             raise ValidationError("Invalid interface name")
@@ -69,6 +113,14 @@ class SecurityValidator:
         if not isinstance(value, str) or not _CONFIG.fullmatch(value):
             raise ValidationError("Invalid UCI configuration identifier")
         return value
+
+    @classmethod
+    def validate_readable_uci_config(cls, value: str) -> str:
+        config = cls.validate_uci_config(value)
+        if config not in cls.READABLE_UCI_CONFIGS:
+            allowed = ", ".join(sorted(cls.READABLE_UCI_CONFIGS))
+            raise ValidationError(f"Configuration {config!r} not supported. Allowed: {allowed}")
+        return config
 
     @classmethod
     def validate_uci_identifier(cls, value: str, *, field: str) -> str:

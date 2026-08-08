@@ -106,6 +106,16 @@ async def test_registration_attaches_complete_manifests(settings: Any) -> None:
             assert manifest["requires_confirmation"] is False
 
 
+async def test_manifest_lengths_match_domain_validators(settings: Any) -> None:
+    registry = build_invocation_kernel(settings, FakeExplorer()).registry
+    assert registry.get("search_router_logs").input_schema.fields["search_term"].max_length == 100
+    assert registry.get("search_dhcp_logs").input_schema.fields["search_term"].max_length == 100
+    details = registry.get("get_device_dhcp_details").input_schema.fields
+    assert details["mac_address"].max_length == 17
+    assert details["ip_address"].max_length == 45
+    assert registry.get("wifi_scan").input_schema.fields["radio"].max_length == 15
+
+
 async def test_capability_discovery_declares_l1_sdk_and_protocol(settings: Any) -> None:
     kernel = build_invocation_kernel(settings, FakeExplorer())
     result = await kernel.invoke("describe_router_capabilities", {})

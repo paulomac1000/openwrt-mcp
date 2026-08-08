@@ -23,7 +23,14 @@ def main() -> int:
     run(python, "-m", "compileall", "-q", "src", "tests", "scripts", env=environment)
     run(python, "scripts/check_ai_skills_lock.py", env=environment)
     run(python, "scripts/check_workflows.py", env=environment)
-    run(python, "scripts/validate_docs.py", "AGENTS.md", "docs/openwrt-mcp.md", env=environment)
+    run(
+        python,
+        "scripts/validate_docs.py",
+        "AGENTS.md",
+        "docs/openwrt-mcp.md",
+        "docs/production-acceptance.md",
+        env=environment,
+    )
     run(python, "-m", "pytest", "-q", env=environment)
     run(
         python,
@@ -38,7 +45,7 @@ def main() -> int:
         "not integration",
         env=environment,
     )
-    run(python, "-m", "coverage", "report", "--fail-under=80", env=environment)
+    run(python, "-m", "coverage", "report", "--fail-under=90", env=environment)
     mock_environment = dict(environment)
     if importlib.util.find_spec("mcp") is None:
         mock_environment["PYTHONPATH"] = os.pathsep.join(

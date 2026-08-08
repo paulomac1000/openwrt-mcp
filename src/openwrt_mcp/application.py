@@ -381,7 +381,7 @@ class InvocationKernel:
                     retryable=manifest.retryable,
                     meta=self._meta(name, started, manifest),
                 )
-            except (ValidationError, TypeError, ValueError) as exc:
+            except ValidationError as exc:
                 return KernelResult.failed(
                     "INVALID_PARAM",
                     str(exc),

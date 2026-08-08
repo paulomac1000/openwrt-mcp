@@ -1,4 +1,4 @@
-"""Owned placeholders for tests requiring an isolated OpenWRT laboratory."""
+"""Owned placeholder for future capabilities outside the current L1 profile."""
 
 from __future__ import annotations
 
@@ -8,31 +8,12 @@ import pytest
 @pytest.mark.integration
 @pytest.mark.skip(
     reason=(
-        "TODO(agent-with-isolated-openwrt-lab): verify SSH host-key mismatch fails "
-        "before command execution on a disposable router."
+        "NOT_IMPLEMENTED(agent-with-isolated-openwrt-lab): write tools are inactive. "
+        "After a reviewed principal-bound authorization + expiring approval subsystem "
+        "exists, implement real plan/execute/verify/compensate acceptance here."
     )
 )
-def test_real_router_host_identity_enrollment() -> None:
-    pass
-
-
-@pytest.mark.integration
-@pytest.mark.skip(
-    reason=(
-        "TODO(agent-with-isolated-openwrt-lab): cancel a controlled slow read and "
-        "prove bounded SSH, lock, and connection cleanup."
+def test_real_router_write_authorization_and_approval_workflow() -> None:
+    raise NotImplementedError(
+        "requires the future authenticated write profile and disposable OpenWRT lab"
     )
-)
-def test_real_router_cancellation_cleanup() -> None:
-    pass
-
-
-@pytest.mark.integration
-@pytest.mark.skip(
-    reason=(
-        "TODO(agent-with-isolated-openwrt-lab): after reviewed approval and authorization "
-        "implementation, test plan/execute/verify/compensate for one write workflow."
-    )
-)
-def test_real_router_write_workflow() -> None:
-    pass
