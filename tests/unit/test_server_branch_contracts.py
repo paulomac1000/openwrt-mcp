@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
@@ -78,7 +77,12 @@ def test_setup_logging_covers_initialization_repeat_and_insecure_warning(
     previous_level = root.level
     previous_configured = root.__dict__.pop("_openwrt_configured", None)
     warnings: list[str] = []
-    monkeypatch.setattr(server_module.logger, "warning", lambda message, *args: warnings.append(message))
+
+    def record_warning(message: str, *args: Any) -> None:
+        del args
+        warnings.append(message)
+
+    monkeypatch.setattr(server_module.logger, "warning", record_warning)
     try:
         cfg = replace(settings(tmp_path), insecure_skip_host_key_check=True)
         server_module.setup_logging(cfg)
