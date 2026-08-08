@@ -39,7 +39,9 @@ def main() -> int:
                 if "TODO" in text or "FIXME" in text:
                     findings.append(f"{relative}: executable source contains TODO/FIXME")
                 if _MARKER in text or _raises_not_implemented(tree):
-                    findings.append(f"{relative}: executable source contains an implementation placeholder")
+                    findings.append(
+                        f"{relative}: executable source contains an implementation placeholder"
+                    )
                 continue
 
             if not _raises_not_implemented(tree):
