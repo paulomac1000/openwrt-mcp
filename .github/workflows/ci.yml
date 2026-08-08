@@ -16,6 +16,7 @@ concurrency:
 
 env:
   AI_SKILLS_SHA: 661ff01a5e70d58d6c94a12545b24647e52063ed
+  WORKFLOW_AUDITOR_SHA: c6dc6b13b2dd40b6e087140cd071b45067d75b39
   CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
@@ -39,6 +40,15 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Checkout immutable profile-aware workflow auditor
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: paulomac1000/ai-skills
+          ref: c6dc6b13b2dd40b6e087140cd071b45067d75b39
+          path: .trusted/workflow-auditor
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
@@ -54,6 +64,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git -C .trusted/ai-skills rev-parse HEAD)" = "$AI_SKILLS_SHA"
+          test "$(git -C .trusted/workflow-auditor rev-parse HEAD)" = "$WORKFLOW_AUDITOR_SHA"
           test -s requirements-runtime.lock
           test -s requirements-dev.lock
           grep -q '^mcp==2\.0\.0 \\' requirements-runtime.lock
@@ -70,10 +81,11 @@ jobs:
         run: |
           set -euo pipefail
           python .trusted/ai-skills/skills/afds-doc-writer/validate.py docs/openwrt-mcp.md
-          audit_root="$(mktemp -d)"
-          mkdir -p "$audit_root/.github/workflows"
-          cp .github/workflows/ci.yml "$audit_root/.github/workflows/ci.yml"
-          python .trusted/ai-skills/skills/ci-cd-architect/tools/check_github_actions_policy.py "$audit_root"
+          baseline_root="$(mktemp -d)"
+          mkdir -p "$baseline_root/.github/workflows"
+          cp .github/workflows/ci.yml "$baseline_root/.github/workflows/ci.yml"
+          python .trusted/ai-skills/skills/ci-cd-architect/tools/check_github_actions_policy.py "$baseline_root"
+          python .trusted/workflow-auditor/skills/ci-cd-architect/tools/check_github_actions_policy.py "$GITHUB_WORKSPACE"
 
       - name: Run repository diagnostics
         run: |
@@ -95,12 +107,12 @@ jobs:
         run: python scripts/ci.py
 
       - name: Run official MCP client acceptance tests
-        run: python -m pytest -q tests/integration/test_official_mcp_client.py
+        run: python -m pytest -q --junitxml=official-mcp-junit.xml tests/integration/test_official_mcp_client.py
 
       - name: Run branch coverage
         run: |
           set -euo pipefail
-          python -m coverage run --branch -m pytest -q -m "not integration"
+          python -m coverage run --branch -m pytest -q -m "not integration" --junitxml=non-integration-junit.xml
           python -m coverage report --fail-under=80
           python -m coverage xml -o coverage.xml
 
@@ -148,15 +160,29 @@ jobs:
           import hashlib
           import json
           import os
+          import xml.etree.ElementTree as ET
           from pathlib import Path
 
           def digest(path: str) -> str:
               return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
+          def junit_summary(path: str) -> dict[str, object]:
+              root = ET.parse(path).getroot()
+              suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+              return {
+                  "path": path,
+                  "digest": digest(path),
+                  "tests": sum(int(suite.get("tests", "0")) for suite in suites),
+                  "failures": sum(int(suite.get("failures", "0")) for suite in suites),
+                  "errors": sum(int(suite.get("errors", "0")) for suite in suites),
+                  "skipped": sum(int(suite.get("skipped", "0")) for suite in suites),
+              }
+
           inspect = json.loads(Path("image-inspect.json").read_text(encoding="utf-8"))[0]
           wheel = next(Path("dist").glob("*.whl"))
           payload = {
               "schema_version": 1,
+              "profile": "l1-local-read-only-stdio",
               "provider": "github-actions",
               "repository": os.environ["GITHUB_REPOSITORY"],
               "revision": os.environ["CANDIDATE_SHA"],
@@ -177,6 +203,8 @@ jobs:
                   "runtime_lock": {"path": "requirements-runtime.lock", "digest": digest("requirements-runtime.lock")},
                   "dev_lock": {"path": "requirements-dev.lock", "digest": digest("requirements-dev.lock")},
                   "coverage": {"path": "coverage.xml", "digest": digest("coverage.xml")},
+                  "official_mcp_junit": junit_summary("official-mcp-junit.xml"),
+                  "non_integration_junit": junit_summary("non-integration-junit.xml"),
               },
           }
           Path("ci-evidence.json").write_text(
@@ -185,21 +213,33 @@ jobs:
           PY
           sha256sum ci-evidence.json > ci-evidence.sha256
 
-      - name: Upload exact provider evidence and release payload
+      - name: Upload diagnostic provider evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openwrt-mcp-evidence-${{ github.run_id }}
           path: |
             coverage.xml
+            official-mcp-junit.xml
+            non-integration-junit.xml
             wheel.sha256
             requirements-runtime.lock
             requirements-dev.lock
             dist/*.whl
-            image.tar.gz
-            image.sha256
             image-inspect.json
             ci-evidence.json
             ci-evidence.sha256
           if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload minimal closed release payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openwrt-mcp-release-${{ github.run_id }}
+          path: |
+            image.tar.gz
+            image.sha256
+            ci-evidence.json
+            ci-evidence.sha256
+          if-no-files-found: error
           retention-days: 30

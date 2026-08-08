@@ -27,8 +27,12 @@ implemented:
   - exact wheel smoke uses real official-client stdio subprocesses for modern and legacy protocol revisions
   - CI consumes reviewed committed hashed locks and builds/smoke-tests the container exactly once
   - protected publishing promotes the exact CI-exported image archive without source checkout, rebuild, or image execution
+  - L1 requests carry an immutable OS-process-derived caller principal that is distinct from router target identity in response metadata and SSH audit records
+  - MCP 2.0.0 private registration internals are isolated in a version-bounded compatibility adapter with fail-closed regression coverage
+  - candidate workflows are independently audited as a complete governed set by an immutable profile-aware auditor revision in addition to the stable baseline checks
+  - diagnostic evidence and the minimal protected-release payload are uploaded as separate artifacts
 not_claimed:
-  - L2 principal authentication or capability authorization
+  - L2 remote principal authentication, capability authorization, or target-binding enforcement
   - stable router identity enrollment or target revalidation
   - server-enforced approval records for write capabilities
   - compliance with the red ai-skills c6dc6b13 candidate manifest schema

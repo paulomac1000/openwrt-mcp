@@ -23,10 +23,10 @@ jobs:
       actions: read
       contents: read
     steps:
-      - name: Download exact CI evidence
+      - name: Download minimal exact release payload
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          name: openwrt-mcp-evidence-${{ github.event.workflow_run.id }}
+          name: openwrt-mcp-release-${{ github.event.workflow_run.id }}
           path: release-payload
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -61,7 +61,7 @@ jobs:
           PY
           docker load --input image.tar.gz
           image="openwrt-mcp:ci-$EXPECTED_SHA"
-          test "$(docker image inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$image")" = "$EXPECTED_SHA"
+          test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$EXPECTED_SHA"
 
   publish:
     if: github.event.workflow_run.conclusion == 'success'
@@ -76,10 +76,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Download exact CI evidence
+      - name: Download minimal exact release payload
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          name: openwrt-mcp-evidence-${{ github.event.workflow_run.id }}
+          name: openwrt-mcp-release-${{ github.event.workflow_run.id }}
           path: release-payload
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -115,7 +115,7 @@ jobs:
           PY
           docker load --input image.tar.gz
           image="openwrt-mcp:ci-$EXPECTED_SHA"
-          test "$(docker image inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$image")" = "$EXPECTED_SHA"
+          test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$EXPECTED_SHA"
 
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee

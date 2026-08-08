@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from openwrt_mcp.observability import get_request_id
+from openwrt_mcp.observability import get_caller_context, get_request_id
 from openwrt_mcp.sanitizer import sanitize_log_line
 from openwrt_mcp.settings import Settings, get_settings
 from openwrt_mcp.validators import SecurityValidator
@@ -185,9 +185,11 @@ class SSHConnection:
                 return "", f"Execution error: {exc}", 1
 
     def _log_audit(self, command: str) -> None:
+        caller = get_caller_context()
         entry = (
             f"{datetime.now(UTC).isoformat()} | {get_request_id()} | "
-            f"{self.settings.openwrt_user}@{self.settings.openwrt_host} | "
+            f"caller={caller.principal} | "
+            f"target={self.settings.openwrt_user}@{self.settings.openwrt_host} | "
             f"{command}\n"
         )
         try:

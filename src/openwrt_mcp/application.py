@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from openwrt_mcp.observability import build_meta, request_context
+from openwrt_mcp.observability import CallerContext, build_meta, process_caller_context, request_context
 from openwrt_mcp.sanitizer import sanitize_response_data
 from openwrt_mcp.validators import ValidationError
 
@@ -242,10 +242,12 @@ class InvocationKernel:
         registry: CapabilityRegistry,
         operations: dict[str, Operation],
         target_identity: str,
+        default_caller: CallerContext | None = None,
     ) -> None:
         self.registry = registry
         self._operations = dict(operations)
         self._target_identity = target_identity
+        self._default_caller = default_caller or process_caller_context()
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
         active = set(registry.active_names())
@@ -282,6 +284,7 @@ class InvocationKernel:
         arguments: dict[str, Any],
         *,
         request_id: str | None = None,
+        caller: CallerContext | None = None,
     ) -> KernelResult:
         started = time.monotonic()
         try:
@@ -289,7 +292,7 @@ class InvocationKernel:
         except ValidationError as exc:
             return KernelResult.failed("NOT_FOUND", str(exc))
 
-        with request_context(request_id):
+        with request_context(request_id, caller=caller or self._default_caller):
             if not manifest.active:
                 return KernelResult.failed(
                     "CAPABILITY_INACTIVE",
