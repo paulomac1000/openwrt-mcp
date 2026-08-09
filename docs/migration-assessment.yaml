@@ -3,7 +3,7 @@ project: openwrt-mcp
 profile: l1-local-read-only-stdio
 assessed_revision: candidate-tree
 standards_revision: 661ff01a5e70d58d6c94a12545b24647e52063ed
-status: production-candidate
+status: production-candidate-awaiting-final-evidence
 evidence_binding:
   model: >-
     This file assesses the candidate tree and required evidence classes. Exact commit
@@ -20,7 +20,7 @@ baseline_policy:
   pinned_revision_reason: >-
     661ff01a5e70d58d6c94a12545b24647e52063ed remains the last trusted immutable
     baseline adopted by this branch. The latest unified-contract candidate observed
-    during this assessment is c5ba4091cd8a3043fe4ba9715a3bda96d62a05e4; it is not
+    during this assessment is b54fc6b27ea80b36a70d5de73445970e17f55789; it is not
     adopted because its exact-head workflow set is red and its capability-manifest
     machine schema and normative reference remain contradictory.
   workflow_auditor_revision: c6dc6b13b2dd40b6e087140cd071b45067d75b39
@@ -34,9 +34,11 @@ baseline_policy:
     schema, normative reference, generator, semantic validator, and evidence contract
     agree.
 implemented:
+  - package and public capability contract are versioned 2.0.0 for the breaking migration from the published 1.x line
   - official MCP Python SDK 2.0.0 is the required runtime dependency
   - supported host interpreter is POSIX CPython 3.12.x; unsupported host identity fails closed
   - stdio is the only MCP invocation transport in the supported profile
+  - loopback liveness/readiness is optional and can be disabled without blocking stdio startup
   - the invocation kernel owns closed argument validation, deadlines, target serialization, and final response byte limits
   - the MCP adapter publishes the exact kernel input schema after wrapper field/required parity checks
   - controlled MCP failures carry sanitized structured error content; unexpected operation TypeError/ValueError map to INTERNAL
@@ -49,8 +51,10 @@ implemented:
   - reads and writes are never automatically replayed after ambiguous connection loss
   - audit output redacts secrets, IPv4/IPv6 addresses and MAC addresses; audit files use no-follow plus mode 0600 where supported
   - exact wheel smoke uses real official-client stdio subprocesses for modern and legacy protocol revisions
+  - exact artifact smoke uses an explicit child-environment allowlist rather than inheriting the full CI environment
   - exact artifact smoke verifies closed schemas, numeric bounds, success mapping, and structured controlled errors
-  - CI consumes reviewed committed hashed locks and builds/smoke-tests the container exactly once
+  - CI consumes reviewed committed hashed locks and builds/smoke-tests the container exactly once per authoritative PR/main event
+  - feature-branch push no longer duplicates the expensive PR pipeline
   - container runtime is non-root and includes graceful stop/liveness metadata
   - protected publishing promotes the exact CI-exported image archive without source checkout or rebuild
   - L1 requests carry an immutable POSIX process principal distinct from router target identity in internal context/audit
@@ -59,21 +63,29 @@ implemented:
   - candidate workflows are independently audited as a complete governed set by an immutable profile-aware auditor revision
   - diagnostic evidence and the minimal protected-release payload are uploaded as separate artifacts
   - real-router acceptance tests are executable and environment-gated rather than empty TODO bodies
+  - real-router acceptance now includes an official-client execution pass across all 19 active read tools
   - CI enforces that the future write-profile test is the only owned NOT_IMPLEMENTED placeholder
   - cancelled and timed-out remote commands are terminated with SIGKILL before channel close, leaving no orphaned process on the router
   - mock router data mirrors real OpenWRT output shapes: realistic uci key/value samples, logread lines, DHCP events, wifi scan fields, and self-consistent lease resolution
   - e2e smoke tests drive the real stdio subprocess through the official MCP client (catalog, closed schemas, kernel invocation, sanitized controlled errors)
+  - failed system telemetry is represented as explicit partial/null state instead of fabricated zero values
+  - DHCP detail aggregation distinguishes unknown state from false state when a source fails
+  - failed ping, traceroute, and nslookup commands no longer report successful tool execution
+  - iwinfo scan parsing handles Mode and Channel when both occur on the same line
 not_claimed:
   - L2 remote principal authentication, capability authorization, or target-binding enforcement
   - stable router identity enrollment or target revalidation
   - server-enforced approval records for write capabilities
   - Windows or other non-POSIX host support
   - Python 3.13 or 3.14 runtime support
-  - compliance with the red ai-skills c5ba4091cd8a3043fe4ba9715a3bda96d62a05e4 candidate contract
+  - compliance with the red ai-skills b54fc6b27ea80b36a70d5de73445970e17f55789 candidate contract
+  - production verification of the current v2 candidate against a real OpenWRT router until the renewed six-test lab record is green
 pending_evidence:
   - provider-backed hosted CI on the exact final SHA of this branch
+  - real-router lab record with 6 passed, 0 failed, 0 skipped for tests/integration/test_real_router_acceptance.py on the exact final SHA
   - independent latest-format adoption assessment after a green unified ai-skills baseline exists
-real_router_lab_record:
+historical_real_router_lab_record:
+  assessed_revision: 18c657542d5d46fa38d0467484e91eee7398e55b
   environment: >-
     Isolated OpenWRT laboratory router with dropbear SSH server, OpenWRT 23.05
     line, kernel 5.15.150. Full environment details and JUnit XML are retained
@@ -82,6 +94,9 @@ real_router_lab_record:
     OPENWRT_LAB_RUN=1 OPENWRT_MOCK_MODE=0 OPENWRT_LAB_SLOW_TARGET=198.51.100.254
     python -m pytest -vv -m lab tests/integration/test_real_router_acceptance.py
   result: 5 passed, 0 failed, 0 skipped (2026-08-09, Python 3.12.13, asyncssh 2.24.0, mcp 2.0.0)
+  applicability: >-
+    Historical evidence only. The v2 candidate changed response semantics and added an
+    all-active-tool lab case, so this record cannot satisfy the current final gate.
 deferred_non_profile_evidence:
   - NOT_IMPLEMENTED real-router write authorization/approval workflow if a future profile activates write capabilities
 waivers: []
