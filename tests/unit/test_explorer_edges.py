@@ -71,9 +71,13 @@ async def test_connection_and_system_error_paths(tmp_path: Path) -> None:
         },
     )
     info = await odd.get_system_info()
-    assert info["uptime_seconds"] == 0
-    assert info["memory_total_bytes"] == 0
-    assert info["memory_used_percent"] == 0
+    assert info["success"] is True
+    assert info["partial"] is True
+    assert info["uptime_seconds"] is None
+    assert info["memory_total_bytes"] is None
+    assert info["memory_used_percent"] is None
+    assert info["subsections"]["uptime"]["success"] is False
+    assert info["subsections"]["memory"]["success"] is False
 
 
 @pytest.mark.asyncio
@@ -187,6 +191,46 @@ async def test_diagnostics_without_gateway_and_static_dhcp_edge_paths(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_device_details_report_unknown_instead_of_false_on_partial_sources(
+    tmp_path: Path,
+) -> None:
+    service = explorer(
+        tmp_path,
+        {
+            "cat /tmp/dhcp.leases": ("", "lease table unavailable", 1),
+            "uci show dhcp": (
+                "dhcp.host=host\n"
+                "dhcp.host.ip='192.0.2.5'\n"
+                "dhcp.host.name='printer'\n",
+                "",
+                0,
+            ),
+            "logread -l 500": ("dnsmasq DHCPACK 192.0.2.5 printer", "", 0),
+        },
+    )
+    details = await service.get_device_dhcp_details(ip_address="192.0.2.5")
+    assert details["success"] is True
+    assert details["partial"] is True
+    assert details["is_currently_connected"] is None
+    assert details["has_static_reservation"] is True
+    assert details["subsections"]["leases"]["success"] is False
+
+    unavailable = explorer(
+        tmp_path,
+        {
+            "cat /tmp/dhcp.leases": ("", "lease table unavailable", 1),
+            "uci show dhcp": ("", "dhcp config unavailable", 1),
+            "logread -l 500": ("", "logs unavailable", 1),
+        },
+    )
+    failed = await unavailable.get_device_dhcp_details(ip_address="192.0.2.5")
+    assert failed == {
+        "success": False,
+        "error": "Unable to read DHCP lease or reservation sources",
+    }
+
+
+@pytest.mark.asyncio
 async def test_device_validation_network_failures_and_scan_parser(tmp_path: Path) -> None:
     service = explorer(
         tmp_path,
@@ -199,10 +243,12 @@ async def test_device_validation_network_failures_and_scan_parser(tmp_path: Path
     )
     ping = await service.ping_host("example.test", 1)
     assert ping["success"] is False and ping["reachable"] is False
+    assert ping["error"] == "unreachable"
     trace = await service.traceroute_host("example.test")
-    assert trace["success"] is True and trace["output"] == "no traceroute"
+    assert trace["success"] is False and trace["error"] == "no traceroute"
     lookup = await service.nslookup_host("example.test")
-    assert lookup["success"] is True and lookup["resolved"] is False
+    assert lookup["success"] is False and lookup["resolved"] is False
+    assert lookup["error"] == "not found"
     assert (await service.wifi_scan("wlan0"))["success"] is False
 
     with pytest.raises(ValidationError, match="Provide device"):
@@ -213,10 +259,13 @@ async def test_device_validation_network_failures_and_scan_parser(tmp_path: Path
         await service.get_device_dhcp_details(ip_address="999.999.999.999")
 
     parsed = service._parse_wifi_scan(
-        'Cell 01 - Address: 00:11:22:33:44:55\nESSID: "one"\nChannel: 1\n'
-        'Cell 02 - Address: 00:11:22:33:44:66\nESSID: "two"\nMode: Master\n'
+        'Cell 01 - Address: 00:11:22:33:44:55\nESSID: "one"\nMode: Master  Channel: 1\n'
+        'Cell 02 - Address: 00:11:22:33:44:66\nESSID: "two"\nMode: Client\n'
     )
     assert [item["ssid"] for item in parsed] == ["one", "two"]
+    assert parsed[0]["mode"] == "Master"
+    assert parsed[0]["channel"] == "1"
+    assert parsed[1]["mode"] == "Client"
 
 
 @pytest.mark.parametrize(
