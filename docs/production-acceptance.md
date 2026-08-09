@@ -21,7 +21,7 @@ This runbook is the final environment-dependent gate for the supported **L1 POSI
 
 Use an isolated router or disposable OpenWRT VM which may safely lose SSH sessions. Do not run the cancellation/timeout tests against a shared production router. The test account may be `root` because the current profile is read-only, but the SSH key and `known_hosts` file must be dedicated to the laboratory.
 
-Set the normal runtime variables plus the laboratory variables:
+Set the normal runtime variables plus the laboratory variables. The final six variables are overrides for routers which differ from the safe defaults used by the all-tool test:
 
 ```bash
 export OPENWRT_LAB_RUN=1
@@ -32,8 +32,6 @@ export OPENWRT_USER=root
 export OPENWRT_SSH_KEY="$PWD/keys/openwrt_id_ed25519"
 export OPENWRT_KNOWN_HOSTS="$PWD/keys/known_hosts"
 export OPENWRT_LAB_SLOW_TARGET=198.51.100.254
-
-# Set these when the router differs from the safe defaults used by the all-tool test.
 export OPENWRT_LAB_DEVICE_IP=192.0.2.1
 export OPENWRT_LAB_DIAGNOSTIC_HOST=127.0.0.1
 export OPENWRT_LAB_DNS_NAME=openwrt.lan
