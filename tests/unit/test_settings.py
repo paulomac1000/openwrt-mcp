@@ -26,6 +26,12 @@ def test_rest_configuration_is_not_part_of_runtime_settings() -> None:
     assert "rest_auth_token" not in Settings.__dataclass_fields__
 
 
+def test_health_listener_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENWRT_MOCK_MODE", "1")
+    monkeypatch.setenv("HEALTH_ENABLED", "false")
+    assert Settings.from_env().health_enabled is False
+
+
 def test_settings_snapshot_is_stable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENWRT_MOCK_MODE", "1")
     monkeypatch.setenv("OPENWRT_HOST", "192.0.2.1")
