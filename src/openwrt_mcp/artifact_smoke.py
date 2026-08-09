@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
-import socket
 import tempfile
 from collections.abc import Mapping
 from typing import Any, TextIO
@@ -16,24 +15,31 @@ from mcp.client.stdio import stdio_client
 
 _MODERN_PROTOCOL = "2026-07-28"
 _LEGACY_PROTOCOL = "2025-11-25"
+_ALLOWED_CHILD_ENV = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+)
 
 
-def _free_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-def _server_params(*, health_port: int) -> StdioServerParameters:
+def _server_params() -> StdioServerParameters:
     executable = shutil.which("openwrt-mcp")
     if executable is None:
         raise RuntimeError("installed openwrt-mcp console entry point was not found")
-    env = dict(os.environ)
+    env = {
+        key: value
+        for key in _ALLOWED_CHILD_ENV
+        if (value := os.environ.get(key)) is not None
+    }
     env.update(
         {
             "OPENWRT_MOCK_MODE": "1",
             "MCP_TRANSPORT": "stdio",
-            "HEALTH_PORT": str(health_port),
+            "HEALTH_ENABLED": "0",
             "LOG_LEVEL": "WARNING",
         }
     )
@@ -80,7 +86,7 @@ def _assert_clean_stderr(errlog: TextIO, *, mode: str) -> None:
 async def _smoke_modern_stdio() -> None:
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
         transport = stdio_client(
-            _server_params(health_port=_free_loopback_port()),
+            _server_params(),
             errlog=errlog,
         )
         async with Client(transport) as client:
@@ -100,7 +106,7 @@ async def _smoke_modern_stdio() -> None:
 async def _smoke_legacy_stdio() -> None:
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
         async with stdio_client(
-            _server_params(health_port=_free_loopback_port()),
+            _server_params(),
             errlog=errlog,
         ) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
