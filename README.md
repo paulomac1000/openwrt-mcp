@@ -11,11 +11,13 @@ This is intentionally an **L1 local read-only stdio** profile. It does not claim
 - MCP stdio transport only
 - 19 active read capabilities
 - 5 historical write/destructive capability names retained as inactive metadata
-- Loopback-only HTTP liveness/readiness endpoint on port 9094
+- Optional loopback-only HTTP liveness/readiness endpoint on port 9094
 - Verified SSH host identity required outside mock mode
 - L1 caller identity derived from `os.geteuid()`; non-POSIX startup fails closed
 
 REST and legacy HTTP+SSE are intentionally not part of this profile. This avoids sharing `asyncio` locks and an AsyncSSH connection between independent event loops or threads.
+
+The current breaking migration is versioned as **2.0.0** because the public transport, SDK, runtime, tool catalog, timeout ownership, and response semantics differ materially from the last published 1.x line.
 
 ## Configure the router
 
@@ -54,12 +56,15 @@ OPENWRT_KNOWN_HOSTS=$PWD/keys/known_hosts \
 openwrt-mcp
 ```
 
-The optional health listener binds to `127.0.0.1:9094`:
+The health listener is optional and binds only to `127.0.0.1:9094` when enabled:
 
 ```bash
+HEALTH_ENABLED=1 openwrt-mcp
 curl http://127.0.0.1:9094/live
 curl http://127.0.0.1:9094/ready
 ```
+
+For stdio clients which do not need an HTTP health port, set `HEALTH_ENABLED=0`. This prevents an unrelated local port collision from blocking MCP startup.
 
 ## Docker
 
@@ -78,18 +83,23 @@ Every capability has a closed input schema owned by the invocation kernel. The k
 
 All non-concurrent-safe operations are serialized for the complete router target unless a narrower concurrency group is explicitly reviewed. Cancellation, timeout, connection loss, or a remote-output overflow invalidates the current SSH session before a later request may reconnect; commands are never automatically replayed after an ambiguous disconnect. Raw SSH stdout and stderr share a 1 MiB capture budget enforced while bytes are read, before decoding or MCP response serialization.
 
+Version 2 also makes partial/negative data explicit. Failed `/proc` reads no longer become fake zero uptime/memory values, failed DHCP sources no longer become false "not connected"/"no reservation" claims, and failed ping/traceroute/nslookup commands no longer report successful tool execution. Aggregate responses expose partial state where useful.
+
 ## Production acceptance
 
-Ordinary CI proves deterministic behavior, official MCP compatibility, static/security gates, exact-wheel behavior, and exact-container behavior. The only remaining environment-dependent gate is the real-router laboratory suite:
+Ordinary CI proves deterministic behavior, official MCP compatibility, static/security gates, exact-wheel behavior, and exact-container behavior. The remaining environment-dependent gate is the real-router laboratory suite:
 
 ```bash
 OPENWRT_LAB_RUN=1 \
 OPENWRT_LAB_SLOW_TARGET=198.51.100.254 \
+OPENWRT_LAB_WIFI_RADIO=wlan0 \
 .venv/bin/python -m pytest -vv -m lab \
   tests/integration/test_real_router_acceptance.py
 ```
 
-Do not claim “production verified against real OpenWRT” unless that file reports **5 passed, 0 failed, 0 skipped** for the intended router/firmware environment. See `docs/production-acceptance.md` for prerequisites and evidence handling. The single write-profile `NOT_IMPLEMENTED` placeholder is deliberately outside the supported read-only L1 profile.
+The lab must report **6 passed, 0 failed, 0 skipped** for the intended router/firmware environment. In addition to host-key, cancellation, timeout, and response-limit checks, the suite now invokes **all 19 advertised read tools** through the official MCP client. Routers whose interface names or DNS setup differ should set the documented `OPENWRT_LAB_*` overrides in `docs/production-acceptance.md`; do not weaken assertions or skip an advertised tool.
+
+Do not claim “production verified against real OpenWRT” for the current candidate until that six-test record is retained for the exact final revision. See `docs/production-acceptance.md` for prerequisites and evidence handling. The single write-profile `NOT_IMPLEMENTED` placeholder is deliberately outside the supported read-only L1 profile.
 
 ## Release evidence
 
