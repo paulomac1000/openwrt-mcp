@@ -13,6 +13,17 @@ def mock_explorer() -> MockOpenWRTExplorer:
 
 
 @pytest.mark.asyncio
+async def test_mock_system_info_has_v2_partial_contract(
+    mock_explorer: MockOpenWRTExplorer,
+) -> None:
+    result = await mock_explorer.get_system_info()
+    assert result["success"] is True
+    assert result["partial"] is False
+    assert set(result["subsections"]) == {"board", "uptime", "memory"}
+    assert all(section["success"] is True for section in result["subsections"].values())
+
+
+@pytest.mark.asyncio
 async def test_mock_uci_sample_uses_real_key_value_shape(
     mock_explorer: MockOpenWRTExplorer,
 ) -> None:
@@ -42,6 +53,7 @@ async def test_mock_dhcp_details_resolve_own_lease(
     leases = await mock_explorer.list_dhcp_leases()
     lease = leases["leases"][0]
     by_ip = await mock_explorer.get_device_dhcp_details(None, lease["ip"])
+    assert by_ip["partial"] is False
     assert by_ip["is_currently_connected"] is True
     assert by_ip["current_lease"]["mac"] == lease["mac"]
     assert by_ip["recent_log_events"], "expected dnsmasq events for the mock client"
@@ -54,9 +66,17 @@ async def test_mock_dhcp_details_resolve_own_lease(
 @pytest.mark.asyncio
 async def test_mock_unknown_device_has_no_lease(mock_explorer: MockOpenWRTExplorer) -> None:
     result = await mock_explorer.get_device_dhcp_details(None, "192.0.2.250")
+    assert result["partial"] is False
     assert result["is_currently_connected"] is False
     assert result["current_lease"] is None
     assert result["recent_log_events"] == []
+
+
+@pytest.mark.asyncio
+async def test_mock_router_context_uses_v2_schema(mock_explorer: MockOpenWRTExplorer) -> None:
+    result = await mock_explorer.get_router_context()
+    assert result["schema_version"] == "2.0"
+    assert result["partial"] is False
 
 
 @pytest.mark.asyncio
