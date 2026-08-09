@@ -10,7 +10,6 @@ and container via ``openwrt_mcp.artifact_smoke``.
 from __future__ import annotations
 
 import os
-import socket
 import sys
 import tempfile
 from pathlib import Path
@@ -25,23 +24,30 @@ from mcp import Client, StdioServerParameters  # type: ignore[attr-defined]  # n
 from mcp.client.stdio import stdio_client  # type: ignore[attr-defined]  # noqa: E402
 
 pytestmark = [pytest.mark.e2e]
-
-
-def _free_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+_ALLOWED_CHILD_ENV = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+)
 
 
 def _server_params() -> StdioServerParameters:
     root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ)
+    env = {
+        key: value
+        for key in _ALLOWED_CHILD_ENV
+        if (value := os.environ.get(key)) is not None
+    }
     env.update(
         {
             "PYTHONPATH": str(root / "src"),
             "OPENWRT_MOCK_MODE": "1",
             "MCP_TRANSPORT": "stdio",
-            "HEALTH_PORT": str(_free_loopback_port()),
+            "HEALTH_ENABLED": "0",
             "LOG_LEVEL": "WARNING",
         }
     )
@@ -80,6 +86,7 @@ async def test_stdio_subprocess_lists_closed_schemas_and_invokes_kernel() -> Non
             data = structured.get("data", {})
             assert data.get("hostname") == "mock-router"
             assert data.get("openwrt_version") == "23.05-mock"
+            assert data.get("partial") is False
         _assert_clean_stderr(errlog)
 
 
