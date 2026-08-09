@@ -38,6 +38,12 @@ class MockOpenWRTExplorer:
     async def get_system_info(self) -> dict[str, Any]:
         return {
             "success": True,
+            "partial": False,
+            "subsections": {
+                "board": {"success": True, "error": None},
+                "uptime": {"success": True, "error": None},
+                "memory": {"success": True, "error": None},
+            },
             "model": "OpenWRT Mock Router",
             "hostname": "mock-router",
             "openwrt_version": "23.05-mock",
@@ -224,6 +230,12 @@ class MockOpenWRTExplorer:
         events = [event for event in self._dhcp_events() if folded in event["raw_log"].casefold()]
         return {
             "success": True,
+            "partial": False,
+            "subsections": {
+                "leases": {"success": True, "error": None},
+                "static_reservations": {"success": True, "error": None},
+                "logs": {"success": True, "error": None},
+            },
             "device_identifier": identifier,
             "current_lease": current,
             "static_reservation": reservation,
@@ -239,7 +251,7 @@ class MockOpenWRTExplorer:
             "device_id": "mock-router",
             "model": "OpenWRT Mock Router",
             "uptime_seconds": 86_400,
-            "schema_version": "1.0",
+            "schema_version": "2.0",
             "memory_used_percent": 50.0,
             "openwrt_version": "23.05-mock",
             "kernel": "6.6-mock",
