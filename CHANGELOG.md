@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.0] — 2026-08-09
+
+### Breaking migration release
+
+- versioned the completed migration as `2.0.0` because the last published release is `v1.2.1` and this branch changes the public SDK/transport/runtime profile, removes five previously invokable write/destructive tools from active discovery, removes caller-controlled timeout parameters, and changes response semantics
+- made failed system telemetry explicit partial/null state instead of fabricating zero uptime or memory values
+- made `get_device_dhcp_details` distinguish unknown state from false state when lease/reservation sources fail
+- made failed `ping`, `traceroute`, and `nslookup` commands report failed tool execution instead of successful responses containing failure text
+- fixed `iwinfo` scan parsing when `Mode:` and `Channel:` occur on the same line
+- made the loopback health/readiness listener optional so an unrelated port collision cannot prevent stdio startup
+- isolated exact-artifact stdio smoke subprocesses with an explicit child-environment allowlist
+- removed duplicate feature-branch `push` CI for open PRs; the authoritative feature-branch path is `pull_request`, while `main` remains a push trigger
+- expanded the real-router acceptance gate to six cases, including an official-client pass across all 19 active read tools; the current v2 candidate requires a fresh **6 passed, 0 failed, 0 skipped** lab record on its exact final SHA
+- updated the observed red `ai-skills` unified-contract candidate to `b54fc6b27ea80b36a70d5de73445970e17f55789`; the project intentionally keeps the last green immutable baseline `661ff01a5e70d58d6c94a12545b24647e52063ed` until upstream schema/docs/validators and CI are internally consistent
+
+The `1.3.0` and `1.4.0` entries below are historical migration checkpoints from this unmerged branch. They were never published repository tags and are superseded by the `2.0.0` release contract.
+
 ## [1.4.0] — 2026-08-09
 
 ### Completed — AI Skills migration verification and hardening
