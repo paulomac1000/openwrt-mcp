@@ -119,7 +119,11 @@ class OpenWRTExplorer:
                         None
                         if uptime_ok
                         else uptime_error
-                        or ("Invalid /proc/uptime response" if uptime_code == 0 else "Failed to read /proc/uptime")
+                        or (
+                            "Invalid /proc/uptime response"
+                            if uptime_code == 0
+                            else "Failed to read /proc/uptime"
+                        )
                     ),
                 },
                 "memory": {
@@ -128,7 +132,11 @@ class OpenWRTExplorer:
                         None
                         if memory_ok
                         else memory_error
-                        or ("Invalid /proc/meminfo response" if memory_code == 0 else "Failed to read /proc/meminfo")
+                        or (
+                            "Invalid /proc/meminfo response"
+                            if memory_code == 0
+                            else "Failed to read /proc/meminfo"
+                        )
                     ),
                 },
             },
@@ -137,7 +145,11 @@ class OpenWRTExplorer:
             "openwrt_version": board.get("release", {}).get("version", "unknown"),
             "kernel": board.get("kernel", "unknown"),
             "uptime_seconds": uptime_seconds,
-            "uptime": self._format_uptime(int(uptime_seconds)) if uptime_seconds is not None else None,
+            "uptime": (
+                self._format_uptime(int(uptime_seconds))
+                if uptime_seconds is not None
+                else None
+            ),
             "memory_total_bytes": total if memory_ok else None,
             "memory_free_bytes": free if memory_ok else None,
             "memory_used_percent": (
@@ -719,7 +731,12 @@ class OpenWRTExplorer:
         success = bool(value.get("success")) and not bool(value.get("partial"))
         return {
             "success": success,
-            "error": None if success else value.get("error") or ("partial result" if value.get("partial") else None),
+            "error": (
+                None
+                if success
+                else value.get("error")
+                or ("partial result" if value.get("partial") else None)
+            ),
         }
 
     @staticmethod
