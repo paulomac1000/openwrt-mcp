@@ -30,11 +30,7 @@ def _server_params() -> StdioServerParameters:
     executable = shutil.which("openwrt-mcp")
     if executable is None:
         raise RuntimeError("installed openwrt-mcp console entry point was not found")
-    env = {
-        key: value
-        for key in _ALLOWED_CHILD_ENV
-        if (value := os.environ.get(key)) is not None
-    }
+    env = {key: value for key in _ALLOWED_CHILD_ENV if (value := os.environ.get(key)) is not None}
     env.update(
         {
             "OPENWRT_MOCK_MODE": "1",

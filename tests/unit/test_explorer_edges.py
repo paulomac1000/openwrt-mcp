@@ -199,9 +199,7 @@ async def test_device_details_report_unknown_instead_of_false_on_partial_sources
         {
             "cat /tmp/dhcp.leases": ("", "lease table unavailable", 1),
             "uci show dhcp": (
-                "dhcp.host=host\n"
-                "dhcp.host.ip='192.0.2.5'\n"
-                "dhcp.host.name='printer'\n",
+                "dhcp.host=host\ndhcp.host.ip='192.0.2.5'\ndhcp.host.name='printer'\n",
                 "",
                 0,
             ),

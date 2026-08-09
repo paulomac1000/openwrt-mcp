@@ -146,9 +146,7 @@ class OpenWRTExplorer:
             "kernel": board.get("kernel", "unknown"),
             "uptime_seconds": uptime_seconds,
             "uptime": (
-                self._format_uptime(int(uptime_seconds))
-                if uptime_seconds is not None
-                else None
+                self._format_uptime(int(uptime_seconds)) if uptime_seconds is not None else None
             ),
             "memory_total_bytes": total if memory_ok else None,
             "memory_free_bytes": free if memory_ok else None,
@@ -734,8 +732,7 @@ class OpenWRTExplorer:
             "error": (
                 None
                 if success
-                else value.get("error")
-                or ("partial result" if value.get("partial") else None)
+                else value.get("error") or ("partial result" if value.get("partial") else None)
             ),
         }
 

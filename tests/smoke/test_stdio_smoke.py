@@ -37,11 +37,7 @@ _ALLOWED_CHILD_ENV = (
 
 def _server_params() -> StdioServerParameters:
     root = Path(__file__).resolve().parents[2]
-    env = {
-        key: value
-        for key in _ALLOWED_CHILD_ENV
-        if (value := os.environ.get(key)) is not None
-    }
+    env = {key: value for key in _ALLOWED_CHILD_ENV if (value := os.environ.get(key)) is not None}
     env.update(
         {
             "PYTHONPATH": str(root / "src"),
