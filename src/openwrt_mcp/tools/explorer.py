@@ -81,38 +81,70 @@ class OpenWRTExplorer:
         except json.JSONDecodeError:
             return {"success": False, "error": "Invalid board response"}
 
-        uptime_raw, _, _ = await self._run("cat /proc/uptime")
-        memory_raw, _, _ = await self._run("cat /proc/meminfo")
-        try:
-            uptime_seconds = float(uptime_raw.split()[0])
-        except (ValueError, IndexError):
-            uptime_seconds = 0.0
+        uptime_raw, uptime_error, uptime_code = await self._run("cat /proc/uptime")
+        memory_raw, memory_error, memory_code = await self._run("cat /proc/meminfo")
+
+        uptime_seconds: float | None = None
+        if uptime_code == 0:
+            try:
+                uptime_seconds = float(uptime_raw.split()[0])
+            except (ValueError, IndexError):
+                pass
+        uptime_ok = uptime_seconds is not None
 
         memory: dict[str, int] = {}
-        for line in memory_raw.splitlines():
-            if ":" not in line:
-                continue
-            key, value = line.split(":", 1)
-            match = re.search(r"\d+", value)
-            if match:
-                memory[key] = int(match.group()) * 1024
-        total = memory.get("MemTotal", 0)
-        free = memory.get("MemFree", 0)
+        if memory_code == 0:
+            for line in memory_raw.splitlines():
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                match = re.search(r"\d+", value)
+                if match:
+                    memory[key] = int(match.group()) * 1024
+        total = memory.get("MemTotal")
+        free = memory.get("MemFree")
+        memory_ok = total is not None and total > 0 and free is not None
 
         model = board.get("model", "unknown")
         if isinstance(model, dict):
             model = model.get("name") or model.get("id") or "unknown"
         return {
             "success": True,
+            "partial": not (uptime_ok and memory_ok),
+            "subsections": {
+                "board": {"success": True, "error": None},
+                "uptime": {
+                    "success": uptime_ok,
+                    "error": (
+                        None
+                        if uptime_ok
+                        else uptime_error
+                        or ("Invalid /proc/uptime response" if uptime_code == 0 else "Failed to read /proc/uptime")
+                    ),
+                },
+                "memory": {
+                    "success": memory_ok,
+                    "error": (
+                        None
+                        if memory_ok
+                        else memory_error
+                        or ("Invalid /proc/meminfo response" if memory_code == 0 else "Failed to read /proc/meminfo")
+                    ),
+                },
+            },
             "model": str(model),
             "hostname": board.get("hostname", "unknown"),
             "openwrt_version": board.get("release", {}).get("version", "unknown"),
             "kernel": board.get("kernel", "unknown"),
             "uptime_seconds": uptime_seconds,
-            "uptime": self._format_uptime(int(uptime_seconds)),
-            "memory_total_bytes": total,
-            "memory_free_bytes": free,
-            "memory_used_percent": round((1 - free / total) * 100, 1) if total else 0,
+            "uptime": self._format_uptime(int(uptime_seconds)) if uptime_seconds is not None else None,
+            "memory_total_bytes": total if memory_ok else None,
+            "memory_free_bytes": free if memory_ok else None,
+            "memory_used_percent": (
+                round((1 - free / total) * 100, 1)
+                if memory_ok and total is not None and free is not None
+                else None
+            ),
         }
 
     async def get_wifi_status(self) -> dict[str, Any]:
@@ -425,39 +457,62 @@ class OpenWRTExplorer:
         leases = await self.list_dhcp_leases()
         static = await self.get_dhcp_static_leases()
         logs = await self.search_dhcp_logs(identifier)
+        lease_ok = bool(leases.get("success"))
+        static_ok = bool(static.get("success"))
+        logs_ok = bool(logs.get("success"))
+        if not lease_ok and not static_ok:
+            return {
+                "success": False,
+                "error": "Unable to read DHCP lease or reservation sources",
+            }
+
         folded = identifier.casefold()
-        current = next(
-            (
-                item
-                for item in leases.get("leases", [])
-                if folded
-                in {
-                    str(item.get("mac", "")).casefold(),
-                    str(item.get("ip", "")).casefold(),
-                }
-            ),
-            None,
+        current = (
+            next(
+                (
+                    item
+                    for item in leases.get("leases", [])
+                    if folded
+                    in {
+                        str(item.get("mac", "")).casefold(),
+                        str(item.get("ip", "")).casefold(),
+                    }
+                ),
+                None,
+            )
+            if lease_ok
+            else None
         )
-        reservation = next(
-            (
-                item
-                for item in static.get("leases", [])
-                if folded
-                in {
-                    str(item.get("mac", "")).casefold(),
-                    str(item.get("ip", "")).casefold(),
-                }
-            ),
-            None,
+        reservation = (
+            next(
+                (
+                    item
+                    for item in static.get("leases", [])
+                    if folded
+                    in {
+                        str(item.get("mac", "")).casefold(),
+                        str(item.get("ip", "")).casefold(),
+                    }
+                ),
+                None,
+            )
+            if static_ok
+            else None
         )
         return {
             "success": True,
+            "partial": not (lease_ok and static_ok and logs_ok),
+            "subsections": {
+                "leases": self._subsection_status(leases),
+                "static_reservations": self._subsection_status(static),
+                "logs": self._subsection_status(logs),
+            },
             "device_identifier": identifier,
             "current_lease": current,
             "static_reservation": reservation,
-            "has_static_reservation": reservation is not None,
-            "is_currently_connected": current is not None,
-            "recent_log_events": logs.get("events", [])[:5],
+            "has_static_reservation": reservation is not None if static_ok else None,
+            "is_currently_connected": current is not None if lease_ok else None,
+            "recent_log_events": logs.get("events", [])[:5] if logs_ok else [],
             "note": "DHCP logs require 'log_dhcp' enabled in dnsmasq configuration.",
         }
 
@@ -466,8 +521,8 @@ class OpenWRTExplorer:
             "success": True,
             "device_id": "unknown",
             "model": "unknown",
-            "uptime_seconds": 0,
-            "schema_version": "1.0",
+            "uptime_seconds": None,
+            "schema_version": "2.0",
             "subsections": {},
         }
 
@@ -477,8 +532,8 @@ class OpenWRTExplorer:
                 {
                     "device_id": system.get("hostname", "unknown"),
                     "model": system.get("model", "unknown"),
-                    "uptime_seconds": system.get("uptime_seconds", 0),
-                    "memory_used_percent": system.get("memory_used_percent", 0),
+                    "uptime_seconds": system.get("uptime_seconds"),
+                    "memory_used_percent": system.get("memory_used_percent"),
                     "openwrt_version": system.get("openwrt_version", "unknown"),
                     "kernel": system.get("kernel", "unknown"),
                 }
@@ -490,7 +545,7 @@ class OpenWRTExplorer:
             result["cpu_load_1min"] = float(load_raw.split()[0])
             result["subsections"]["cpu"] = {"success": load_code == 0}
         except (ValueError, IndexError):
-            result["cpu_load_1min"] = 0
+            result["cpu_load_1min"] = None
             result["subsections"]["cpu"] = {
                 "success": False,
                 "error": load_error or "loadavg_failed",
@@ -535,21 +590,29 @@ class OpenWRTExplorer:
         host = self._validate_host(host)
         bounded = min(max(int(count), 1), 10)
         stdout, stderr, code = await self._run(f"ping -c {bounded} -W 2 {host}")
-        return {
+        output = stdout[:500] if stdout else (stderr or "no output")
+        result: dict[str, Any] = {
             "success": code == 0,
             "host": host,
-            "output": stdout[:500] if stdout else (stderr or "no output"),
+            "output": output,
             "reachable": code == 0,
         }
+        if code != 0:
+            result["error"] = stderr or "Ping failed"
+        return result
 
     async def traceroute_host(self, host: str) -> dict[str, Any]:
         host = self._validate_host(host)
-        stdout, stderr, _ = await self._run(f"traceroute -n {host}")
-        return {
-            "success": True,
+        stdout, stderr, code = await self._run(f"traceroute -n {host}")
+        output = stdout[:1_000] if stdout else (stderr or "traceroute not available")
+        result: dict[str, Any] = {
+            "success": code == 0,
             "host": host,
-            "output": stdout[:1_000] if stdout else (stderr or "traceroute not available"),
+            "output": output,
         }
+        if code != 0:
+            result["error"] = stderr or "Traceroute failed"
+        return result
 
     async def nslookup_host(
         self,
@@ -559,12 +622,16 @@ class OpenWRTExplorer:
         host = self._validate_host(host)
         dns_server = self._validate_host(dns_server)
         stdout, stderr, code = await self._run(f"nslookup {host} {dns_server}")
-        return {
-            "success": True,
+        resolved = code == 0 and ("Address" in stdout or "Name:" in stdout)
+        result: dict[str, Any] = {
+            "success": code == 0,
             "host": host,
-            "resolved": code == 0 and ("Address" in stdout or "Name:" in stdout),
+            "resolved": resolved,
             "output": stdout[:500] if stdout else (stderr or "no output"),
         }
+        if code != 0:
+            result["error"] = stderr or "DNS lookup failed"
+        return result
 
     async def wifi_scan(self, radio: str = "wlan0") -> dict[str, Any]:
         radio = SecurityValidator.validate_interface_name(radio)
@@ -591,14 +658,16 @@ class OpenWRTExplorer:
                 current = {}
             if "Address:" in stripped:
                 current["bssid"] = stripped.split("Address:", 1)[1].strip()
-            elif "ESSID:" in stripped:
+            if "ESSID:" in stripped:
                 current["ssid"] = stripped.split("ESSID:", 1)[1].strip().strip('"')
-            elif "Channel:" in stripped:
-                current["channel"] = stripped.split("Channel:", 1)[1].strip()
-            elif "Signal level:" in stripped:
+            mode_match = re.search(r"(?:^|\s)Mode:\s*([^\s]+)", stripped)
+            if mode_match:
+                current["mode"] = mode_match.group(1)
+            channel_match = re.search(r"(?:^|\s)Channel:\s*([^\s]+)", stripped)
+            if channel_match:
+                current["channel"] = channel_match.group(1)
+            if "Signal level:" in stripped:
                 current["signal"] = stripped.split("Signal level:", 1)[1].strip()
-            elif "Mode:" in stripped:
-                current["mode"] = stripped.split("Mode:", 1)[1].strip()
         if current:
             networks.append(current)
         return networks
@@ -647,10 +716,10 @@ class OpenWRTExplorer:
 
     @staticmethod
     def _subsection_status(value: dict[str, Any]) -> dict[str, Any]:
-        success = bool(value.get("success"))
+        success = bool(value.get("success")) and not bool(value.get("partial"))
         return {
             "success": success,
-            "error": None if success else value.get("error"),
+            "error": None if success else value.get("error") or ("partial result" if value.get("partial") else None),
         }
 
     @staticmethod
