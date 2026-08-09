@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -45,6 +46,17 @@ def _slow_target() -> str:
             "long enough for cancellation/timeout testing"
         )
     return target
+
+
+def _device_ip(settings: Settings) -> str:
+    candidate = os.getenv("OPENWRT_LAB_DEVICE_IP", settings.openwrt_host).strip()
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        pytest.fail(
+            "OPENWRT_LAB_DEVICE_IP must be set to a valid IPv4/IPv6 address when "
+            "OPENWRT_HOST is not an IP literal"
+        )
 
 
 def _wrong_known_hosts(path: Path, settings: Settings) -> Path:
@@ -106,6 +118,59 @@ async def test_real_router_official_mcp_read_smoke(lab_settings: Settings) -> No
             assert info.structured_content["data"]["hostname"]
     finally:
         await app.close()
+
+
+@pytest.mark.asyncio
+async def test_real_router_all_active_tools_execute_successfully(lab_settings: Settings) -> None:
+    """Prove every advertised L1 tool is actually executable on the lab target."""
+    from mcp import Client
+
+    device_ip = _device_ip(lab_settings)
+    diagnostic_host = os.getenv("OPENWRT_LAB_DIAGNOSTIC_HOST", "127.0.0.1").strip()
+    dns_name = os.getenv("OPENWRT_LAB_DNS_NAME", "openwrt.lan").strip()
+    dns_server = os.getenv("OPENWRT_LAB_DNS_SERVER", "127.0.0.1").strip()
+    wifi_radio = os.getenv("OPENWRT_LAB_WIFI_RADIO", "wlan0").strip()
+    search_term = os.getenv("OPENWRT_LAB_SEARCH_TERM", "dnsmasq").strip()
+
+    calls: dict[str, dict[str, object]] = {
+        "test_router_connection": {},
+        "get_router_info": {},
+        "get_router_wifi_status": {},
+        "get_router_dhcp_leases": {},
+        "get_router_firewall_rules": {},
+        "read_router_uci_config": {"config_name": "network"},
+        "list_router_packages": {},
+        "get_router_logs": {"lines": 20, "filter_level": "all"},
+        "search_router_logs": {"search_term": search_term, "max_results": 10},
+        "diagnose_router_connectivity": {},
+        "get_dhcp_static_leases": {},
+        "search_dhcp_logs": {"search_term": search_term},
+        "get_device_dhcp_details": {"ip_address": device_ip},
+        "get_router_context": {},
+        "describe_router_capabilities": {},
+        "ping_host": {"host": diagnostic_host, "count": 1},
+        "traceroute_host": {"host": diagnostic_host},
+        "nslookup_host": {"host": dns_name, "dns_server": dns_server},
+        "wifi_scan": {"radio": wifi_radio},
+    }
+
+    app = build_application(lab_settings)
+    failures: dict[str, object] = {}
+    try:
+        async with Client(app.mcp) as client:
+            listing = await client.list_tools()
+            advertised = {tool.name for tool in listing.tools}
+            assert advertised == set(calls)
+            for name, arguments in calls.items():
+                result = await client.call_tool(name, arguments)
+                if result.is_error:
+                    failures[name] = result.structured_content or [
+                        getattr(item, "text", "") for item in result.content
+                    ]
+    finally:
+        await app.close()
+
+    assert failures == {}, f"active tools failed on real router: {failures}"
 
 
 async def _assert_no_ping_process(client: SSHConnection, target: str) -> None:
