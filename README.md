@@ -1,210 +1,108 @@
-# OpenWRT-MCP
+# OpenWRT MCP
 
-[![CI](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/ci.yml)
-[![Docker](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/publish.yml/badge.svg)](https://github.com/paulomac1000/openwrt-mcp/actions/workflows/publish.yml)
-[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+Hardened read-only MCP server for observing one OpenWRT router over SSH.
 
-Read-only MCP (Model Context Protocol) server for OpenWRT router management and diagnostics.
-Enables AI assistants (Claude Desktop, LibreChat, Cline) to observe and analyze an OpenWRT
-router without any write access.
+## Supported runtime profile
 
-## Requirements
+This is intentionally an **L1 local read-only stdio** profile. It does not claim L2 authentication, principal authorization, or stable target binding.
 
-- Python 3.14+ (for local use) or Docker
-- OpenWRT router with SSH enabled (Dropbear or OpenSSH)
-- SSH key pair for authentication
+- CPython `3.12.x` on a POSIX host
+- Official MCP Python SDK `2.0.0`
+- MCP stdio transport only
+- 19 active read capabilities
+- 5 historical write/destructive capability names retained as inactive metadata
+- Optional loopback-only HTTP liveness/readiness endpoint on port 9094
+- Verified SSH host identity required outside mock mode
+- L1 caller identity derived from `os.geteuid()`; non-POSIX startup fails closed
 
-## Quick Start
+REST and legacy HTTP+SSE are intentionally not part of this profile. This avoids sharing `asyncio` locks and an AsyncSSH connection between independent event loops or threads.
 
-### 1. Generate SSH Key
+The current breaking migration is versioned as **2.0.0** because the public transport, SDK, runtime, tool catalog, timeout ownership, and response semantics differ materially from the last published 1.x line.
 
-```bash
-ssh-keygen -t ed25519 -f openwrt_id_ed25519 -C "openwrt-mcp"
-ssh-copy-id -i openwrt_id_ed25519.pub root@192.168.0.1
-```
-
-### 2. Configure
+## Configure the router
 
 ```bash
+ssh-keygen -t ed25519 -f keys/openwrt_id_ed25519 -C openwrt-mcp
+ssh-copy-id -i keys/openwrt_id_ed25519.pub root@192.168.1.1
+ssh-keyscan -H 192.168.1.1 > keys/known_hosts
 cp .env.example .env
-# Edit .env with your OPENWRT_HOST and SSH key path
 ```
 
-### 3. Run with Docker
+Set at least `OPENWRT_HOST`, `OPENWRT_SSH_KEY`, and `OPENWRT_KNOWN_HOSTS`. Real-mode startup fails immediately when the configured `known_hosts` file does not exist or neither a usable SSH key nor password is available.
 
-**Option A — with docker compose:**
+## Local development
 
 ```bash
-# After editing .env, for Docker add MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1 to .env
-docker compose up -d
+python3.12 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
+.venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+.venv/bin/python scripts/ci.py
 ```
 
-**Option B — with plain docker run:**
+For deterministic development without a router:
 
 ```bash
-docker run -d \
-  --name openwrt-mcp \
-  -p 9094:9094 \
-  -p 9095:9095 \
-  -p 9096:9096 \
-  -e OPENWRT_HOST=192.168.0.1 \
-  -e OPENWRT_SSH_KEY=/app/keys/openwrt_id_ed25519 \
-  -e MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1 \
-  -v $(pwd)/keys:/app/keys:ro \
-  ghcr.io/paulomac1000/openwrt-mcp:latest
+OPENWRT_MOCK_MODE=1 .venv/bin/python scripts/mock_smoke.py
 ```
 
-**Building locally:**
+## Run
+
+The server communicates over stdin/stdout. Diagnostics are written to stderr.
 
 ```bash
-git clone https://github.com/paulomac1000/openwrt-mcp.git
-cd openwrt-mcp
-docker build -t openwrt-mcp .
-# Then run with the same docker run command above
+OPENWRT_HOST=192.168.1.1 \
+OPENWRT_SSH_KEY=$PWD/keys/openwrt_id_ed25519 \
+OPENWRT_KNOWN_HOSTS=$PWD/keys/known_hosts \
+openwrt-mcp
 ```
 
-### 4. Run locally (Python 3.14+)
+The health listener is optional and binds only to `127.0.0.1:9094` when enabled:
 
 ```bash
-pip install -e ".[dev]"
-OPENWRT_HOST=192.168.0.1 OPENWRT_SSH_KEY=/path/to/key openwrt-mcp
+HEALTH_ENABLED=1 openwrt-mcp
+curl http://127.0.0.1:9094/live
+curl http://127.0.0.1:9094/ready
 ```
 
-## Ports
+For stdio clients which do not need an HTTP health port, set `HEALTH_ENABLED=0`. This prevents an unrelated local port collision from blocking MCP startup.
 
-| Port | Protocol | Purpose | Endpoint |
-|------|----------|---------|----------|
-| 9094 | HTTP | Health check | `GET /health` |
-| 9095 | SSE | MCP transport (SSE) | `/sse`, `/messages` |
-| 9096 | HTTP | REST API | `/api/*` |
+## Docker
 
-### Verify
+CI builds the wheel first, builds the image exactly once from that wheel plus the reviewed hashed runtime lockfile, smoke-tests that exact image, and exports it for later promotion. The image runs as UID 10001, uses `SIGINT` for graceful Docker stop, and includes a loopback `/live` health check.
 
 ```bash
-# Health check
-curl http://localhost:9094/health
-
-# List all MCP tools
-curl http://localhost:9096/api/tools
-
-# Call a tool
-curl -X POST http://localhost:9096/api/tools/get_router_info \
-  -H "Content-Type: application/json" \
-  -d '{}'
-
-# Get tool manifest
-curl http://localhost:9096/api/tools/get_router_info/manifest
+python -m build --wheel --no-isolation
+docker build -t openwrt-mcp:local .
 ```
 
-## Available Tools (24)
+Run the container under an MCP host that attaches to its stdio. Mount the private key and known-hosts file read-only. For hardened deployments, also use a read-only root filesystem, drop Linux capabilities, set `no-new-privileges`, and provide writable storage only for `/tmp` and the audit-log location if audit logging is enabled.
 
-Tools are categorized by risk level: **[READ]** tools are safe — they query the router with no side effects.
-**[WRITE]** tools can modify router state and require `ENABLE_WRITE_OPERATIONS=1` in `.env`.
-**[DESTRUCTIVE]** tools are irreversible (reboot) and require explicit confirmation.
+## Capability and input policy
 
-| Category | Tool | Risk | Description |
-|----------|------|------|-------------|
-| **Connection** | `test_router_connection` | READ | Verify SSH connectivity |
-| **System** | `get_router_info` | READ | Board info, memory, uptime, release |
-| | `get_router_context` | READ | Unified context snapshot (system, wifi, DHCP, health) |
-| | `describe_router_capabilities` | READ | Server introspection — tools, manifests, collectors |
-| **Network** | `get_router_wifi_status` | READ | WiFi radios, SSIDs, connected clients |
-| | `get_router_dhcp_leases` | READ | Active DHCP leases |
-| | `diagnose_router_connectivity` | READ | Ping, DNS, and gateway tests |
-| | `ping_host` | READ | Ping a specific host |
-| | `traceroute_host` | READ | Traceroute to a host |
-| | `nslookup_host` | READ | DNS lookup from the router |
-| | `wifi_scan` | READ | Scan neighboring WiFi networks |
-| **Security** | `get_router_firewall_rules` | READ | iptables / nftables / fw4 rules |
-| | `read_router_uci_config` | READ | Read UCI configuration sections |
-| **Diagnostics** | `get_router_logs` | READ | Recent system logs |
-| | `search_router_logs` | READ | Filtered log search |
-| **Packages** | `list_router_packages` | READ | Installed OPKG packages |
-| **DHCP** | `get_dhcp_static_leases` | READ | Static DHCP reservations |
-| | `search_dhcp_logs` | READ | Search DHCP events in logs |
-| | `get_device_dhcp_details` | READ | Full device info (lease, reservation, logs) |
-| **Write** | `uci_set` | WRITE | Set a UCI configuration value |
-| | `uci_commit` | WRITE | Commit UCI changes permanently |
-| | `restart_interface` | WRITE | Restart a network interface |
-| | `reload_network` | WRITE | Reload network services |
-| | `reboot_device` | DESTRUCTIVE | Reboot the router (irreversible) |
+Every capability has a closed input schema owned by the invocation kernel. The kernel rejects missing fields, unknown fields, invalid types, and out-of-range values before acquiring the target lock or performing SSH I/O. The MCP adapter publishes that exact kernel schema, including length and numeric limits; SDK-generated wrapper metadata is checked for field/required parity before registration completes. Deadlines are server-owned and are not public tool parameters.
 
-## Configuration
+All non-concurrent-safe operations are serialized for the complete router target unless a narrower concurrency group is explicitly reviewed. Cancellation, timeout, connection loss, or a remote-output overflow invalidates the current SSH session before a later request may reconnect; commands are never automatically replayed after an ambiguous disconnect. Raw SSH stdout and stderr share a 1 MiB capture budget enforced while bytes are read, before decoding or MCP response serialization.
 
-All configuration is via environment variables. See `.env.example` for a complete template.
+Version 2 also makes partial/negative data explicit. Failed `/proc` reads no longer become fake zero uptime/memory values, failed DHCP sources no longer become false "not connected"/"no reservation" claims, and failed ping/traceroute/nslookup commands no longer report successful tool execution. Aggregate responses expose partial state where useful.
 
-### Required
+## Production acceptance
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `OPENWRT_HOST` | Router IP address | `192.168.0.1` |
-| `OPENWRT_SSH_KEY` | Path to SSH private key | `/app/keys/openwrt_id_ed25519` |
-
-### Optional
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENWRT_PORT` | `22` | SSH port |
-| `OPENWRT_USER` | `root` | SSH username |
-| `MCP_SSE_PORT` | `9095` | MCP SSE transport port |
-| `REST_API_PORT` | `9096` | REST API port |
-| `HEALTH_PORT` | `9094` | Health check port |
-| `SSH_TIMEOUT` | `30` | SSH connection timeout (seconds) |
-| `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED` | — | Set to `1` for Docker port forwarding |
-| `ENABLE_WRITE_OPERATIONS` | `false` | Set to `1` to enable write tools (uci_set, reboot, and others) |
-| `OPENWRT_PASSWORD` | `None` | SSH password (not recommended — use SSH keys) |
-| `ENABLE_AUDIT_LOGGING` | `true` | Log all executed commands |
-| `AUDIT_LOG_FILE` | `/app/log/openwrt_mcp.log` | Audit log path |
-| `LOG_LEVEL` | `INFO` | Logging level |
-| `OPENWRT_KNOWN_HOSTS` | — | Path to SSH known_hosts file for host key verification |
-
-## Security Model
-
-- **Read-only by default** — All SSH commands are whitelisted; write operations (`uci set`, `ifdown`, `ubus reboot`) require `ENABLE_WRITE_OPERATIONS=1`
-- **Command whitelist** — Explicit read-only patterns (`ubus call`, `uci show`, `cat /proc/*`, `logread`, `ping`, and others)
-- **Write command whitelist** — Separate `execute_write()` path for write operations (`ifdown`, `ifup`, `uci set/commit`, `/etc/init.d/network`, `ubus reboot`)
-- **Blocked patterns** — `rm`, `reboot`, `wget`, `curl`, `uci set` (in read path), shell metacharacters (`;`, `|`, `&&`, `$`, and others)
-- **Key-based authentication** — Password login discouraged
-- **SSH host key verification** — Optional via `OPENWRT_KNOWN_HOSTS` (set to path of known_hosts file)
-- **Audit logging** — All commands logged with timestamps for accountability
-- **Localhost binding** — All ports bind to `127.0.0.1` by default; set `MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1` for Docker
-
-## Standards Compliance
-
-This server follows two AI-First standards:
-
-| Standard | Document | Version | Description |
-|----------|----------|---------|-------------|
-| **AFDS** | [`docs_standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/afds-doc-writer/docs_standards.md) | v1.0 | Documentation structure, frontmatter schema, controlled language |
-| **MCP Core** | [`mcp-server-standards.md`](https://github.com/paulomac1000/ai-skills/blob/main/skills/mcp-server-architect/mcp-server-standards.md) | v1.1.0 | Tool design, response contracts, testing hierarchy, security |
-
-Compliance level: **L3-ready** (all L1-L3 rules met; Risk Consistency Matrix enforced by automated tests).
-
-## Testing
+Ordinary CI proves deterministic behavior, official MCP compatibility, static/security gates, exact-wheel behavior, and exact-container behavior. The remaining environment-dependent gate is the real-router laboratory suite:
 
 ```bash
-pip install -e ".[dev]"
-pytest tests/unit/ tests/integration/ -q       # 268 tests (requires .env for integration)
-pytest tests/unit/ --cov=openwrt_mcp -q         # 80%+ coverage
-ruff check . && ruff format --check .           # lint
-mypy src/openwrt_mcp/ --strict                  # type check
-bandit -r src/openwrt_mcp/ -ll                  # security
+OPENWRT_LAB_RUN=1 \
+OPENWRT_LAB_SLOW_TARGET=198.51.100.254 \
+OPENWRT_LAB_WIFI_RADIO=wlan0 \
+.venv/bin/python -m pytest -vv -m lab \
+  tests/integration/test_real_router_acceptance.py
 ```
 
-## Quick Reference
+The lab must report **6 passed, 0 failed, 0 skipped** for the intended router/firmware environment. In addition to host-key, cancellation, timeout, and response-limit checks, the suite now invokes **all 19 advertised read tools** through the official MCP client. Routers whose interface names or DNS setup differ should set the documented `OPENWRT_LAB_*` overrides in `docs/production-acceptance.md`; do not weaken assertions or skip an advertised tool.
 
-| Metric | Value |
-|--------|-------|
-| Python | 3.14+ (Docker: 3.14) |
-| Tools | 24 (19 READ + 4 WRITE + 1 DESTRUCTIVE) |
-| Tests | 296 (215 unit + 53 integration + 10 smoke + 18 e2e) |
-| Coverage | 86% |
-| Lint | 0 errors (ruff + mypy --strict + bandit) |
-| Docker | `ghcr.io/paulomac1000/openwrt-mcp:latest` |
-| Standards | AFDS v1.0 + [MCP Core v1.1.0](https://github.com/paulomac1000/ai-skills) — L2+ |
-| License | MIT |
+Do not claim “production verified against real OpenWRT” for the current candidate until that six-test record is retained for the exact final revision. See `docs/production-acceptance.md` for prerequisites and evidence handling. The single write-profile `NOT_IMPLEMENTED` placeholder is deliberately outside the supported read-only L1 profile.
 
-## License
+## Release evidence
 
-MIT
+The publish workflow does not check out source or rebuild dependencies/image. It consumes the closed image archive produced and smoke-tested by a successful CI run for the exact `main` SHA, verifies its checksum and source label, and publishes only the immutable SHA tag with provenance attestation.
+
+See `docs/openwrt-mcp.md`, `docs/production-acceptance.md`, and `docs/migration-assessment.yaml` for architecture, acceptance, and standards status.

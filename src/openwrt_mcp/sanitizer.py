@@ -1,82 +1,78 @@
-"""Secret sanitization for log output and response payloads.
+"""Boundary sanitization for logs, audit records, and model-visible data."""
 
-Two trust boundaries, two functions:
+from __future__ import annotations
 
-* ``sanitize_log_line()``  — runs on every log record (Canonical Template 4a).
-  Redacts credentials AND IP addresses: log files SHOULD NOT leak LAN
-  topology or secrets.
-* ``sanitize_response_data()`` — runs on the payload returned to the agent
-  inside ``_success_response()`` (Canonical Template 4b). Redacts credentials
-  only. IP and MAC addresses are PRESERVED on purpose: reporting DHCP leases,
-  connectivity tests, and routing data is this server's core function, so
-  redacting addresses here would make most tools useless. WiFi pre-shared
-  keys (``uci show wireless`` exposes ``key='...'``) remain the real secret
-  and ARE redacted.
-"""
-
+import ipaddress
 import re
 from typing import Any
 
-# Credential / key patterns — redacted in BOTH logs and response payloads.
-_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE), "Bearer <REDACTED>"),
-    (re.compile(r"Authorization:\s*.+", re.IGNORECASE), "Authorization: <REDACTED>"),
-    # key='psk', password=..., token: ... — quoted or bare value.
+_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", re.I), "Bearer <REDACTED>"),
+    (re.compile(r"Authorization:\s*.+", re.I), "Authorization: <REDACTED>"),
     (
         re.compile(
-            r"\b(password|passwd|psk|secret|token|key|api[_-]?key)\b(\s*[=:]\s*)"
-            r"('[^']*'|\"[^\"]*\"|\S+)",
-            re.IGNORECASE,
+            r"(?<![A-Za-z0-9])"
+            r"(?P<name>password|passwd|psk|secret|token|key|api[_-]?key|pre[_-]?shared)"
+            r"(?![A-Za-z0-9])"
+            r"(?P<separator>\s*[=:]\s*)"
+            r"(?P<value>'[^']*'|\"[^\"]*\"|\S+)",
+            re.I,
         ),
-        r"\1\2<REDACTED>",
+        r"\g<name>\g<separator><REDACTED>",
     ),
-]
-
-# IP addresses — redacted in logs ONLY (see module docstring).
-_IP_PATTERN: tuple[re.Pattern[str], str] = (
-    re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"),
-    "<IP_REDACTED>",
 )
-
-# Dict keys whose value is a secret — caught even when config is returned as
-# structured data (e.g. {"key": "psk"}) rather than a flat `uci show` line.
-_SECRET_KEY_RE: re.Pattern[str] = re.compile(
-    r"\b(password|passwd|psk|secret|token|key|api[_-]?key|pre[_-]?shared)\b",
-    re.IGNORECASE,
+_IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_IPV6_CANDIDATE_PATTERN = re.compile(
+    r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])"
+)
+_MAC_PATTERN = re.compile(
+    r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f])",
+    re.I,
+)
+_SECRET_KEY_RE = re.compile(
+    r"(?:^|[^A-Za-z0-9])"
+    r"(?:password|passwd|psk|secret|token|key|api[_-]?key|pre[_-]?shared)"
+    r"(?:$|[^A-Za-z0-9])",
+    re.I,
 )
 
 
 def _redact_secrets(text: str) -> str:
-    """Replace credentials, tokens, and keys in a string."""
     for pattern, replacement in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
 
 
+def _redact_ipv6(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        candidate = match.group(0)
+        try:
+            parsed = ipaddress.ip_address(candidate)
+        except ValueError:
+            return candidate
+        return "<IP_REDACTED>" if parsed.version == 6 else candidate
+
+    return _IPV6_CANDIDATE_PATTERN.sub(replace, text)
+
+
 def sanitize_log_line(line: str) -> str:
-    """Redact credentials and IP addresses from a single log line."""
-    line = _redact_secrets(line)
-    pattern, replacement = _IP_PATTERN
-    return pattern.sub(replacement, line)
+    sanitized = _redact_secrets(line)
+    sanitized = _IPV4_PATTERN.sub("<IP_REDACTED>", sanitized)
+    sanitized = _redact_ipv6(sanitized)
+    return _MAC_PATTERN.sub("<MAC_REDACTED>", sanitized)
 
 
 def sanitize_response_data(data: Any) -> Any:
-    """Recursively redact credentials from a response structure.
-
-    IP and MAC addresses are intentionally preserved — see module docstring.
-    Applied at the ``_success_response()`` boundary so a tool that forgets to
-    sanitize cannot leak a secret.
-    """
     if isinstance(data, str):
         return _redact_secrets(data)
     if isinstance(data, dict):
-        result: dict[Any, Any] = {}
-        for k, v in data.items():
-            if isinstance(k, str) and isinstance(v, str) and v and _SECRET_KEY_RE.search(k):
-                result[k] = "<REDACTED>"
+        sanitized: dict[Any, Any] = {}
+        for key, value in data.items():
+            if isinstance(key, str) and _SECRET_KEY_RE.search(key):
+                sanitized[key] = "<REDACTED>"
             else:
-                result[k] = sanitize_response_data(v)
-        return result
+                sanitized[key] = sanitize_response_data(value)
+        return sanitized
     if isinstance(data, list):
         return [sanitize_response_data(item) for item in data]
     if isinstance(data, tuple):

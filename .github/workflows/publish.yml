@@ -1,86 +1,152 @@
-name: Create and publish a Docker image
+# ai-skills-policy-profile: protected-release
+name: Publish tested container
 
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
-  push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: publish-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  group: publish-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-push-image:
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+  verify-ci-payload:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
-      contents: write
-      packages: write
-      attestations: write
-      id-token: write
-
+      actions: read
+      contents: read
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - name: Download minimal exact release payload
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          name: openwrt-mcp-release-${{ github.event.workflow_run.id }}
+          path: release-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      - name: Verify closed CI payload without executing it
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd release-payload
+          sha256sum --check ci-evidence.sha256
+          sha256sum --check image.sha256
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v4
+          evidence = json.loads(Path("ci-evidence.json").read_text(encoding="utf-8"))
+          if evidence["provider"] != "github-actions":
+              raise SystemExit("unexpected evidence provider")
+          if evidence["repository"] != os.environ["EXPECTED_REPOSITORY"]:
+              raise SystemExit("repository identity mismatch")
+          if evidence["revision"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("source revision mismatch")
+          if evidence["run_id"] != int(os.environ["EXPECTED_RUN_ID"]):
+              raise SystemExit("producer run mismatch")
+          if evidence["image"]["source_revision"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("image source label mismatch")
+          PY
+          docker load --input image.tar.gz
+          image="openwrt-mcp:ci-$EXPECTED_SHA"
+          test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$EXPECTED_SHA"
+
+  publish:
+    if: github.event.workflow_run.conclusion == 'success'
+    needs: verify-ci-payload
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ghcr-production
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download minimal exact release payload
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          registry: ${{ env.REGISTRY }}
+          name: openwrt-mcp-release-${{ github.event.workflow_run.id }}
+          path: release-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Re-verify and load exact smoke-tested image
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd release-payload
+          sha256sum --check ci-evidence.sha256
+          sha256sum --check image.sha256
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = json.loads(Path("ci-evidence.json").read_text(encoding="utf-8"))
+          expected = {
+              "provider": "github-actions",
+              "repository": os.environ["EXPECTED_REPOSITORY"],
+              "revision": os.environ["EXPECTED_SHA"],
+              "run_id": int(os.environ["EXPECTED_RUN_ID"]),
+          }
+          for key, value in expected.items():
+              if evidence.get(key) != value:
+                  raise SystemExit(f"evidence mismatch for {key}")
+          if evidence["image"]["source_revision"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("image source label mismatch")
+          PY
+          docker load --input image.tar.gz
+          image="openwrt-mcp:ci-$EXPECTED_SHA"
+          test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$EXPECTED_SHA"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        with:
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+      - name: Promote exact CI image
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="openwrt-mcp:ci-${{ github.event.workflow_run.head_sha }}"
+          target="ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}"
+          docker tag "$source" "$target"
+          docker push "$target"
 
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Resolve pushed digest
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}"
+          docker pull "$tag"
+          digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$tag" | cut -d@ -f2)"
+          test -n "$digest"
+          echo "value=$digest" >> "$GITHUB_OUTPUT"
 
-      - name: Generate artifact attestation
-        uses: actions/attest@v4
+      - name: Attest pushed digest
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.digest.outputs.value }}
           push-to-registry: true
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

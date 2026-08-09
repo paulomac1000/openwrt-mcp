@@ -1,201 +1,319 @@
-"""SSH connection manager for the OpenWRT router."""
+"""Serialized SSH client with per-invocation options and fail-closed writes."""
+
+from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
-import time
-from datetime import datetime
-from pathlib import Path
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any
 
-from openwrt_mcp.observability import get_request_id
-from openwrt_mcp.tools.constants import (
-    AUDIT_LOG_FILE,
-    ENABLE_AUDIT_LOGGING,
-    OPENWRT_HOST,
-    OPENWRT_KNOWN_HOSTS,
-    OPENWRT_PASSWORD,
-    OPENWRT_PORT,
-    OPENWRT_SSH_KEY,
-    OPENWRT_USER,
-    SSH_TIMEOUT,
-)
+from openwrt_mcp.observability import get_caller_context, get_request_id
+from openwrt_mcp.sanitizer import sanitize_log_line
+from openwrt_mcp.settings import Settings, get_settings
 from openwrt_mcp.validators import SecurityValidator
+
+logger = logging.getLogger("openwrt-mcp.ssh")
+_CLOSE_TIMEOUT_SECONDS = 2.0
+_MAX_CAPTURE_BYTES = 1_048_576
+_READ_CHUNK_BYTES = 16_384
+
+
+class _RemoteOutputLimitExceeded(RuntimeError):
+    """Raised when stdout/stderr exceeds the pre-decode transport budget."""
 
 
 class SSHConnection:
-    """SSH connection manager for the OpenWRT router."""
-
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or get_settings()
         self._connection: Any = None
-        self._last_activity: float = 0.0
-        self._lock = asyncio.Lock()
-        self._timeout: int = SSH_TIMEOUT
-        self._cancelled = asyncio.Event()
+        self._connect_lock = asyncio.Lock()
+        self._command_lock = asyncio.Lock()
+        self._cancel_requested: contextvars.ContextVar[bool] = contextvars.ContextVar(
+            f"ssh_cancel_{id(self)}",
+            default=False,
+        )
+        self._timeout_override: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+            f"ssh_timeout_{id(self)}",
+            default=None,
+        )
 
     def set_timeout(self, seconds: int) -> None:
-        """Override SSH timeout for the next command."""
-        self._timeout = seconds
+        """Set a task-local timeout for compatibility with internal callers."""
+        if not 1 <= seconds <= 300:
+            raise ValueError("timeout must be between 1 and 300 seconds")
+        self._timeout_override.set(seconds)
+
+    @contextmanager
+    def timeout_scope(self, seconds: int) -> Iterator[None]:
+        if not 1 <= seconds <= 300:
+            raise ValueError("timeout must be between 1 and 300 seconds")
+        token = self._timeout_override.set(seconds)
+        try:
+            yield
+        finally:
+            self._timeout_override.reset(token)
 
     def cancel(self) -> None:
-        """Signal cancellation to in-flight operations."""
-        self._cancelled.set()
+        """Request cancellation in the current task context.
+
+        Cross-task cancellation must use ``Task.cancel()``.
+        """
+        self._cancel_requested.set(True)
 
     async def connect(self) -> bool:
-        """Establish SSH connection to the router."""
         import asyncssh
 
-        self._cancelled.clear()
-        async with self._lock:
-            if self._connection:
-                try:
-                    self._connection.close()
-                    await self._connection.wait_closed()
-                except Exception:
-                    pass
+        async with self._connect_lock:
+            if self._connection is not None:
+                is_closed = getattr(self._connection, "is_closed", None)
+                if not callable(is_closed) or not is_closed():
+                    return True
+                self._connection = None
 
-            try:
-                connect_kwargs = {
-                    "host": OPENWRT_HOST,
-                    "port": OPENWRT_PORT,
-                    "username": OPENWRT_USER,
-                    "known_hosts": OPENWRT_KNOWN_HOSTS or None,
-                    "connect_timeout": SSH_TIMEOUT,
-                    "login_timeout": SSH_TIMEOUT,
-                }
-
-                if OPENWRT_SSH_KEY and Path(OPENWRT_SSH_KEY).exists():
-                    connect_kwargs["client_keys"] = [OPENWRT_SSH_KEY]
-                elif OPENWRT_PASSWORD:
-                    connect_kwargs["password"] = OPENWRT_PASSWORD
-                else:
-                    raise ValueError("SSH authentication configuration missing.")
-
-                self._connection = await asyncssh.connect(**connect_kwargs)
-                self._last_activity = time.time()
-                logging.info(
-                    "[openwrt] SSH connection established: %s@%s", OPENWRT_USER, OPENWRT_HOST
-                )
-                return True
-
-            except Exception as e:
-                logging.error("[openwrt] SSH connection error: %s", str(e))
+            if self.settings.openwrt_known_hosts is not None:
+                known_hosts: str | None = str(self.settings.openwrt_known_hosts)
+            elif self.settings.insecure_skip_host_key_check:
+                logger.warning("SSH host-key verification is explicitly disabled")
+                known_hosts = None
+            else:
+                logger.error("OPENWRT_KNOWN_HOSTS is required")
                 return False
 
-    async def execute(self, command: str) -> tuple[str, str, int]:
-        """Execute a command on the router over SSH."""
-        import asyncssh
+            kwargs: dict[str, Any] = {
+                "host": self.settings.openwrt_host,
+                "port": self.settings.openwrt_port,
+                "username": self.settings.openwrt_user,
+                "known_hosts": known_hosts,
+                "connect_timeout": self.settings.ssh_timeout,
+                "login_timeout": self.settings.ssh_timeout,
+            }
+            if self.settings.openwrt_ssh_key.exists():
+                kwargs["client_keys"] = [str(self.settings.openwrt_ssh_key)]
+            elif self.settings.openwrt_password:
+                kwargs["password"] = self.settings.openwrt_password
+            else:
+                logger.error("SSH authentication configuration missing")
+                return False
 
-        if not self._connection:
-            if not await self.connect():
-                return "", "No SSH connection", 1
+            try:
+                self._connection = await asyncssh.connect(**kwargs)
+                return True
+            except Exception as exc:
+                logger.error("SSH connection failed (%s)", type(exc).__name__)
+                self._connection = None
+                return False
 
-        # SECURITY: Validate command before execution
-        is_valid, msg = SecurityValidator.validate_command(command)
-        if not is_valid:
-            logging.warning("[openwrt] Command rejected: %s... - %s", command[:50], msg)
-            return "", f"Security denial: {msg}", 1
+    async def execute(
+        self,
+        command: str,
+        *,
+        timeout_seconds: int | None = None,
+    ) -> tuple[str, str, int]:
+        valid, message = SecurityValidator.validate_command(command)
+        if not valid:
+            return "", f"Security denial: {message}", 1
+        return await self._execute_once(
+            command.strip(),
+            timeout_seconds=timeout_seconds,
+            write_operation=False,
+        )
 
-        # SECURITY: Additional sanitation (defense in depth)
-        safe_cmd = command.strip()
-
-        if self._cancelled.is_set():
-            return "", "Operation cancelled", 1
-
-        if ENABLE_AUDIT_LOGGING:
-            self._log_audit(safe_cmd)
-
-        timeout = self._timeout
-
-        try:
-            result = await self._connection.run(safe_cmd, timeout=timeout)
-            self._last_activity = time.time()
-            return result.stdout, result.stderr, result.exit_status
-
-        except (asyncssh.ConnectionLost, asyncssh.DisconnectError, OSError) as e:
-            logging.warning("[openwrt] SSH connection lost (%s), attempting reconnect...", e)
-            if await self.connect():
-                try:
-                    result = await self._connection.run(safe_cmd, timeout=timeout)
-                    self._last_activity = time.time()
-                    return result.stdout, result.stderr, result.exit_status
-                except Exception as e2:
-                    return "", f"Error after reconnect: {str(e2)}", 1
-            return "", f"Failed to re-establish connection: {str(e)}", 1
-
-        except asyncssh.TimeoutError:
-            return "", f"Timeout after {timeout}s: {safe_cmd[:30]}...", 124
-
-        except Exception as e:
-            return "", f"Execution error: {str(e)}", 1
-
-        finally:
-            self._timeout = SSH_TIMEOUT  # always reset to default
-
-    async def execute_write(self, command: str) -> tuple[str, str, int]:
-        """Execute a write operation on the router over SSH.
-
-        Uses ALLOWED_WRITE_PATTERNS instead of ALLOWED_PATTERNS for validation.
-        Only used by write tools (restart_interface, uci_set, etc.).
-        """
-        import asyncssh
-
-        if not self._connection:
-            if not await self.connect():
-                return "", "No SSH connection", 1
-
-        is_valid, msg = SecurityValidator.validate_write_command(command)
-        if not is_valid:
-            logging.warning("[openwrt] Write command rejected: %s... - %s", command[:50], msg)
-            return "", f"Security denial: {msg}", 1
-
-        safe_cmd = command.strip()
-        if self._cancelled.is_set():
-            return "", "Operation cancelled", 1
-        if ENABLE_AUDIT_LOGGING:
-            self._log_audit(safe_cmd)
-        timeout = self._timeout
-        try:
-            result = await self._connection.run(safe_cmd, timeout=timeout)
-            self._last_activity = time.time()
-            return result.stdout, result.stderr, result.exit_status
-        except (asyncssh.ConnectionLost, asyncssh.DisconnectError, OSError) as e:
-            logging.warning(
-                "[openwrt] SSH connection lost during write (%s), attempting reconnect...", e
+    async def execute_write(
+        self,
+        command: str,
+        *,
+        timeout_seconds: int | None = None,
+    ) -> tuple[str, str, int]:
+        valid, message = SecurityValidator.validate_write_command(command)
+        if not valid:
+            return "", f"Security denial: {message}", 1
+        if self.settings.openwrt_known_hosts is None:
+            return (
+                "",
+                "Security denial: write operations require OPENWRT_KNOWN_HOSTS",
+                1,
             )
-            if await self.connect():
+        return await self._execute_once(
+            command.strip(),
+            timeout_seconds=timeout_seconds,
+            write_operation=True,
+        )
+
+    async def _discard_connection(self) -> None:
+        """Atomically detach and close the current SSH session."""
+        async with self._connect_lock:
+            connection = self._connection
+            self._connection = None
+            if connection is None:
+                return
+            try:
+                connection.close()
+                await asyncio.wait_for(
+                    connection.wait_closed(),
+                    timeout=_CLOSE_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                abort = getattr(connection, "abort", None)
+                if callable(abort):
+                    abort()
+                logger.warning("SSH connection cleanup timed out")
+            except Exception as exc:
+                logger.warning("SSH connection cleanup failed (%s)", type(exc).__name__)
+
+    async def _execute_once(
+        self,
+        command: str,
+        *,
+        timeout_seconds: int | None,
+        write_operation: bool,
+    ) -> tuple[str, str, int]:
+        import asyncssh
+
+        timeout = timeout_seconds
+        if timeout is None:
+            timeout = self._timeout_override.get()
+        if timeout is None:
+            timeout = self.settings.ssh_timeout
+        if not 1 <= timeout <= 300:
+            return "", "Invalid timeout", 1
+        if self._cancel_requested.get():
+            self._cancel_requested.set(False)
+            return "", "Operation cancelled", 130
+
+        async with self._command_lock:
+            # connect() reuses a live session and replaces a stale/closed one. Calling it
+            # unconditionally prevents dispatch through a cached object which became closed
+            # between invocations.
+            if not await self.connect():
+                return "", "No SSH connection", 1
+            if self.settings.enable_audit_logging:
+                self._log_audit(command)
+            try:
+                return await self._run_bounded(command, deadline_seconds=timeout)
+            except asyncio.CancelledError:
+                await self._discard_connection()
+                raise
+            except _RemoteOutputLimitExceeded:
+                await self._discard_connection()
+                return "", f"Remote output exceeded {_MAX_CAPTURE_BYTES}-byte safety limit", 126
+            except TimeoutError:
+                await self._discard_connection()
+                return "", f"Timeout after {timeout}s", 124
+            except (
+                asyncssh.ConnectionLost,
+                asyncssh.DisconnectError,
+                OSError,
+            ):
+                await self._discard_connection()
+                if write_operation:
+                    return (
+                        "",
+                        "AMBIGUOUS_OUTCOME: SSH connection lost during write",
+                        125,
+                    )
+                return (
+                    "",
+                    "SSH connection lost during read; command was not replayed",
+                    125,
+                )
+            except Exception as exc:
+                logger.error("SSH command execution failed (%s)", type(exc).__name__)
+                return "", "SSH command execution failed", 1
+
+    async def _run_bounded(self, command: str, *, deadline_seconds: int) -> tuple[str, str, int]:
+        """Execute one command with a combined stdout/stderr byte budget.
+
+        The limit is enforced while bytes are read from AsyncSSH, before UTF-8 decoding
+        and before the kernel serializes the response. This prevents an allowed remote
+        command from forcing an unbounded in-memory capture.
+        """
+        process: Any | None = None
+        read_tasks: list[asyncio.Task[bytes]] = []
+        captured = 0
+
+        async def read_stream(reader: Any) -> bytes:
+            nonlocal captured
+            chunks: list[bytes] = []
+            while True:
+                chunk = await reader.read(_READ_CHUNK_BYTES)
+                if not chunk:
+                    break
+                data = (
+                    chunk.encode("utf-8", errors="replace")
+                    if isinstance(chunk, str)
+                    else bytes(chunk)
+                )
+                captured += len(data)
+                if captured > _MAX_CAPTURE_BYTES:
+                    raise _RemoteOutputLimitExceeded
+                chunks.append(data)
+            return b"".join(chunks)
+
+        try:
+            async with asyncio.timeout(deadline_seconds):
+                process = await self._connection.create_process(command, encoding=None)
+                read_tasks = [
+                    asyncio.create_task(read_stream(process.stdout)),
+                    asyncio.create_task(read_stream(process.stderr)),
+                ]
+                stdout, stderr = await asyncio.gather(*read_tasks)
+                await process.wait_closed()
+        except BaseException:
+            for task in read_tasks:
+                if not task.done():
+                    task.cancel()
+            if read_tasks:
+                await asyncio.gather(*read_tasks, return_exceptions=True)
+            if process is not None:
                 try:
-                    result = await self._connection.run(safe_cmd, timeout=timeout)
-                    self._last_activity = time.time()
-                    return result.stdout, result.stderr, result.exit_status
-                except Exception as retry_err:
-                    return "", str(retry_err), 1
-            return "", str(e), 1
-        except asyncssh.TimeoutError:
-            return "", f"Timeout after {timeout}s: {safe_cmd[:30]}...", 124
-        except Exception as e:
-            return "", f"Execution error: {str(e)}", 1
-        finally:
-            self._timeout = SSH_TIMEOUT
+                    # SIGKILL first: closing the channel/connection alone leaves the
+                    # remote busybox/dropbear command running as an orphan.
+                    process.kill()
+                except (OSError, ValueError):
+                    pass
+                try:
+                    process.close()
+                    await asyncio.wait_for(process.wait_closed(), timeout=_CLOSE_TIMEOUT_SECONDS)
+                except BaseException:
+                    # The enclosing caller also discards the SSH connection for all
+                    # interruption/overflow cases, so process cleanup is best effort here.
+                    pass
+            raise
+
+        assert process is not None
+        exit_status = process.exit_status
+        return (
+            stdout.decode("utf-8", errors="replace"),
+            stderr.decode("utf-8", errors="replace"),
+            int(exit_status) if exit_status is not None else 255,
+        )
 
     def _log_audit(self, command: str) -> None:
+        caller = get_caller_context()
+        entry = (
+            f"{datetime.now(UTC).isoformat()} | {get_request_id()} | "
+            f"caller={caller.principal} | "
+            f"target={self.settings.openwrt_user}@{self.settings.openwrt_host} | "
+            f"{command}\n"
+        )
         try:
-            timestamp = datetime.now().isoformat()
-            log_entry = (
-                f"{timestamp} | {get_request_id()} | {OPENWRT_USER}@{OPENWRT_HOST} | {command}\n"
-            )
-            log_path = Path(AUDIT_LOG_FILE)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(log_entry)
-        except Exception:
-            pass
+            path = self.settings.audit_log_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags | nofollow, 0o600)
+            with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+                os.fchmod(handle.fileno(), 0o600)
+                handle.write(sanitize_log_line(entry))
+        except OSError as exc:
+            logger.error("Audit log write failed (%s)", type(exc).__name__)
 
     async def close(self) -> None:
-        async with self._lock:
-            if self._connection:
-                try:
-                    self._connection.close()
-                    await self._connection.wait_closed()
-                except Exception:
-                    pass
-            self._connection = None
+        # Graceful shutdown waits for the serialized command boundary. Interruption
+        # paths call _discard_connection() directly while already holding this lock.
+        async with self._command_lock:
+            await self._discard_connection()

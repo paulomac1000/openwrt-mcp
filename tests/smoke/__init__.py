@@ -1,1 +1,1 @@
-"""Smoke tests for OpenWRT-MCP REST API."""
+"""Smoke tests for OpenWRT-MCP."""

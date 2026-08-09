@@ -1,5 +1,50 @@
 # Changelog
 
+## [2.0.0] — 2026-08-09
+
+### Breaking migration release
+
+- versioned the completed migration as `2.0.0` because the last published release is `v1.2.1` and this branch changes the public SDK/transport/runtime profile, removes five previously invokable write/destructive tools from active discovery, removes caller-controlled timeout parameters, and changes response semantics
+- made failed system telemetry explicit partial/null state instead of fabricating zero uptime or memory values
+- made `get_device_dhcp_details` distinguish unknown state from false state when lease/reservation sources fail
+- made failed `ping`, `traceroute`, and `nslookup` commands report failed tool execution instead of successful responses containing failure text
+- fixed `iwinfo` scan parsing when `Mode:` and `Channel:` occur on the same line
+- made the loopback health/readiness listener optional so an unrelated port collision cannot prevent stdio startup
+- isolated exact-artifact stdio smoke subprocesses with an explicit child-environment allowlist
+- removed duplicate feature-branch `push` CI for open PRs; the authoritative feature-branch path is `pull_request`, while `main` remains a push trigger
+- expanded the real-router acceptance gate to six cases, including an official-client pass across all 19 active read tools; the current v2 candidate requires a fresh **6 passed, 0 failed, 0 skipped** lab record on its exact final SHA
+- updated the observed red `ai-skills` unified-contract candidate to `b54fc6b27ea80b36a70d5de73445970e17f55789`; the project intentionally keeps the last green immutable baseline `661ff01a5e70d58d6c94a12545b24647e52063ed` until upstream schema/docs/validators and CI are internally consistent
+
+The `1.3.0` and `1.4.0` entries below are historical migration checkpoints from this unmerged branch. They were never published repository tags and are superseded by the `2.0.0` release contract.
+
+## [1.4.0] — 2026-08-09
+
+### Completed — AI Skills migration verification and hardening
+
+- verified the ai-skills standards lock against the upstream repository: `standards-lock.yaml` pins the green immutable `main` revision `661ff01a` (skill version 1.2.0); the unmerged `fix/unified-contract-release-hardening` candidate `c5ba409` was re-confirmed red upstream and remains intentionally unadopted
+- fixed cancelled and timed-out SSH commands now receive `SIGKILL` before channel close; previously dropbear/busybox left the remote `ping` running as an orphan after session invalidation (proven by real-router lab tests)
+- made mock router data mirror real OpenWRT output shapes: realistic `uci show` key/value samples per allowlisted config, logread-style log lines, dnsmasq DHCP events with derived event types, wifi scan `bssid`/`mode` fields, and self-consistent lease resolution in `get_device_dhcp_details`
+- added `tests/unit/test_mock_realism.py` (8 cases) locking mock/real output parity and internal consistency
+- added `tests/smoke/test_stdio_smoke.py` (2 e2e cases) driving the real server subprocess through the official MCP client: catalog, closed schemas, kernel invocation, and sanitized controlled errors
+- strengthened SSH hardening tests to assert the remote process is killed on cancellation, timeout, and output-limit paths
+- recorded the real-router laboratory acceptance run: **5 passed, 0 failed, 0 skipped** (2026-08-09, Python 3.12.13, asyncssh 2.24.0, mcp 2.0.0) against an isolated OpenWRT 23.05/dropbear router
+- deployed the locally built container image in `/var/apps/ha-mcp-stack` replacing the remote GHCR image: hardened L1 stdio profile with verified host keys, `stdin_open`, group-mapped key access, and `/live` python healthcheck; e2e smoke against the real router passes
+
+## [1.3.0] — 2026-08-07
+
+### Review follow-up
+
+- upgraded the required MCP Python SDK from `2.0.0b2` to stable `2.0.0`
+- removed the loopback REST invocation adapter and made the supported runtime profile explicitly L1 local read-only stdio
+- added closed, kernel-owned capability input schemas and transport-independent validation
+- made official MCP `CallToolResult` mapping the only production SDK path
+- committed hash-locked dependency inputs and changed publishing to consume exact CI artifacts
+- pinned the build backend and disabled isolated wheel builds
+- changed capability defaults to conservative no-retry/no-reversibility claims and disabled unsupported confirmation claims
+- added kernel-enforced response byte limits and richer capability discovery metadata
+- added real subprocess stdio artifact smoke for modern and legacy MCP revisions
+- changed container release to build once in CI and promote the exact smoke-tested archive
+
 ## [1.2.1] — 2026-05-21
 
 ### Fixed — Standards Compliance (MCP Server Architect Standard v1.1.0)

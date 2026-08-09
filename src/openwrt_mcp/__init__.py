@@ -1,3 +1,3 @@
-"""OpenWRT MCP tools package."""
+"""OpenWRT MCP package."""
 
-__version__ = "1.2.1"
+__version__ = "2.0.0"

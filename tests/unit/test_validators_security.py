@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+import shlex
+
+import pytest
+
+from openwrt_mcp.validators import SecurityValidator, ValidationError
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "x;reboot",
+        "x&&reboot",
+        "$(reboot)",
+        "`reboot`",
+        "x|sh",
+        "x\nreboot",
+        "x\rreboot",
+        "x\\reboot",
+        "x>file",
+        "x<file",
+    ],
+)
+def test_uci_value_blocks_shell_control(value: str) -> None:
+    with pytest.raises(ValidationError):
+        SecurityValidator.build_uci_set_command("network", "wan", "ipaddr", value)
+
+
+def test_uci_value_rejects_empty_and_oversized_values() -> None:
+    for value in ("", "ą" * 257):
+        with pytest.raises(ValidationError, match="1-512 UTF-8 bytes"):
+            SecurityValidator.validate_uci_value(value)
+
+
+def test_uci_command_quotes_spaces_without_exposing_shell_syntax() -> None:
+    command = SecurityValidator.build_uci_set_command(
+        "wireless", "default_radio0", "ssid", "Trusted guest network"
+    )
+    assert shlex.split(command) == [
+        "uci",
+        "set",
+        "wireless.default_radio0.ssid=Trusted guest network",
+    ]
+    assert SecurityValidator.validate_write_command(command)[0] is True
+
+
+def test_write_validator_accepts_only_reviewed_write_forms() -> None:
+    for command in (
+        "ifup wan",
+        "ifdown wan",
+        "/etc/init.d/network reload",
+        "/etc/init.d/network restart",
+        "uci commit network",
+        "ubus call system reboot",
+    ):
+        assert SecurityValidator.validate_write_command(command)[0] is True
+
+
+def test_write_validator_rejects_empty_control_and_malformed_quotes() -> None:
+    cases = (
+        ("", "Empty or invalid command"),
+        ("uci commit network\nreboot", "Control characters are forbidden"),
+        ("uci set 'unterminated", "Malformed command quoting"),
+    )
+    for command, expected in cases:
+        allowed, message = SecurityValidator.validate_write_command(command)
+        assert allowed is False
+        assert message == expected
+
+
+def test_write_validator_rejects_invalid_uci_assignment_shapes() -> None:
+    for command, fragment in (
+        ("uci set network.wan", "Missing UCI assignment"),
+        ("uci set network.wan.ipaddr.extra=x", "config.section.option"),
+        ("uci commit ../../etc/passwd", "Invalid UCI configuration identifier"),
+    ):
+        allowed, message = SecurityValidator.validate_write_command(command)
+        assert allowed is False
+        assert fragment in message
+
+
+def test_loopback_interface_is_never_restartable() -> None:
+    for interface in ("lo", "lo0"):
+        with pytest.raises(ValidationError, match="Loopback"):
+            SecurityValidator.validate_interface_name(interface)
+
+
+def test_write_validator_rejects_unquoted_injection() -> None:
+    allowed, _ = SecurityValidator.validate_write_command(
+        "uci set network.wan.ipaddr=192.0.2.1;reboot"
+    )
+    assert allowed is False
+
+
+def test_write_validator_rejects_option_and_path_confusion() -> None:
+    for command in (
+        "uci set -q=x",
+        "uci commit ../../etc/passwd",
+        "ifup --help",
+        "ubus call system reboot extra",
+    ):
+        assert SecurityValidator.validate_write_command(command)[0] is False
+
+
+def test_read_validator_remains_allowlist_only() -> None:
+    assert SecurityValidator.validate_command("ubus call system board")[0] is True
+    assert SecurityValidator.validate_command("cat /etc/shadow")[0] is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ubus list > /tmp/leak",
+        "ubus list $(reboot)",
+        "ubus list foo\\bar",
+        "nft list ruleset 2>/dev/null",
+        "ping -c 1 8.8.8.8 & reboot",
+    ],
+)
+def test_read_command_rejects_shell_syntax(command: str) -> None:
+    allowed, _ = SecurityValidator.validate_command(command)
+    assert allowed is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "dnsmasq\u00a0lease",
+        "dnsmasq\u2003lease",
+        "dnsmasq\u2028lease",
+    ],
+)
+def test_search_term_rejects_unicode_whitespace(value: str) -> None:
+    assert SecurityValidator.is_safe_search_term(value) is False

@@ -1,257 +1,192 @@
-"""Centralized input validation for OpenWRT MCP tools."""
+"""Central input and fixed-command validation."""
 
+from __future__ import annotations
+
+import ipaddress
 import re
+import shlex
 
 
 class ValidationError(Exception):
     """Raised when input fails validation."""
 
 
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9._@\[\]-]{1,128}$")
+_CONFIG = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_INTERFACE = re.compile(r"^[a-z][a-z0-9._-]{0,14}$")
+_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$")
+_MAC = re.compile(r"^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$")
+_DANGEROUS_VALUE = re.compile(r"[\x00-\x1f\x7f;&|`$<>\\]")
+
+
 class SecurityValidator:
-    """
-    Whitelist-based command validator to prevent command injection.
-    All operations are read-only (no system modifications).
+    """Allowlist validator for values and commands executed on the router."""
 
-    SECURITY: This class is critical for system safety.
-    """
+    READABLE_UCI_CONFIGS = frozenset(
+        {
+            "dhcp",
+            "network",
+            "wireless",
+            "firewall",
+            "system",
+            "dropbear",
+            "luci",
+            "uhttpd",
+            "rpcd",
+            "ucitrack",
+            "ubootenv",
+        }
+    )
 
-    # ALLOWED READ-ONLY COMMANDS
     ALLOWED_PATTERNS = [
-        # UBUS – OpenWRT system services (status/info only)
         r"^ubus call system board$",
         r"^ubus call system info$",
         r"^ubus call network\.interface\.\w+ status$",
         r"^ubus call network\.wireless status$",
         r"^ubus list$",
-        r"^ubus list .+$",
-        # UCI – configuration (read-only)
-        r"^uci show$",
-        r"^uci show [a-zA-Z0-9._-]+$",
+        r"^uci show(?: [a-zA-Z0-9._-]+)?$",
         r"^uci get [a-zA-Z0-9._@:\[\]-]+$",
-        # DHCP – lease list
-        r"^cat /tmp/dhcp\.leases$",
-        r"^cat /var/dhcp\.leases$",
-        # Firewall – rules (read-only)
-        r"^iptables -L -n -v$",
-        r"^iptables -L -n -v -t nat$",
-        r"^iptables -L -n -v -t mangle$",
-        r"^nft list ruleset(?: 2>/dev/null)?$",
-        r"^fw4 status(?: 2>/dev/null)?$",
-        # System logs
-        r"^logread$",
-        r"^logread -e [a-zA-Z0-9._-]+$",
-        r"^logread -l \d+$",
-        # System information
-        r"^cat /proc/meminfo$",
-        r"^cat /proc/cpuinfo$",
-        r"^cat /proc/uptime$",
-        r"^cat /proc/1/comm$",
-        r"^cat /etc/openwrt_version$",
-        r"^cat /etc/openwrt_release$",
-        r"^df -h$",
-        r"^free$",
-        r"^top -bn1$",
-        r"^ps$",
-        # Network configuration
-        r"^ip addr show$",
-        r"^ip route show$",
-        r"^iwinfo$",
-        r"^iwinfo .+ info$",
-        r"^iw dev$",
-        # Network diagnostics
-        r"^ping -c \d+(?: -W \d+)? [\w\.\-]+$",
-        r"^nslookup [\w\.\-]+(?: [\w\.\-]+)?$",
-        r"^traceroute -n [\w\.\-]+$",
-        r"^traceroute [\w\.\-]+$",
-        # WiFi scan (read-only)
-        r"^iwinfo .+ scan$",
-        r"^iw dev .+ scan$",
-        # System load
-        r"^cat /proc/loadavg$",
-        # Packages (OPKG) – READ-ONLY ONLY
-        r"^opkg list$",
-        r"^opkg list-installed$",
-        r"^opkg list-upgradable$",
-        r"^opkg info [a-zA-Z0-9._-]+$",
-        r"^opkg search [a-zA-Z0-9._-]+$",
-    ]
-
-    DANGEROUS_METACHARACTERS = [
-        ";",
-        "&&",
-        "||",
-        "|",
-        "$(",
-        "`",
-        "$",
-        "{",
-        "}",
-    ]
-
-    BLOCKED_PATTERNS = [
-        r"rm\s+-",
-        r"dd\s+",
-        r"mkfs",
-        r"uci\s+(set|add|remove|delete|rename|revert|commit)",
-        r"opkg\s+(install|remove|upgrade|update|configure)",
-        r"reboot",
-        r"halt",
-        r"poweroff",
-        r"wget\s+",
-        r"curl\s+",
-        r">\s*/(?!dev/null)",
-        r"\|\s*sh",
-        r"\|\s*bash",
-        r"\|\s*ash",
-        r";\s*",
-        r"\$\(",
-        r"\$\{",
-        r"`",
-        r"mv\s+",
-        r"chmod\s+",
-        r"chown\s+",
-        r">\s*[^/\s]",
-        r"<\s*[^/\s]",
+        r"^cat /(?:tmp|var)/dhcp\.leases$",
+        r"^iptables -L -n -v(?: -t (?:nat|mangle))?$",
+        r"^nft list ruleset$",
+        r"^fw4 status$",
+        r"^logread(?: -l \d+|-e [a-zA-Z0-9._-]+)?$",
+        r"^cat /proc/(?:meminfo|cpuinfo|uptime|loadavg|1/comm)$",
+        r"^cat /etc/openwrt_(?:version|release)$",
+        r"^(?:df -h|free|top -bn1|ps|ip addr show|ip route show|iwinfo|iw dev)$",
+        r"^iwinfo [A-Za-z0-9._-]+ (?:info|scan)$",
+        r"^iw dev [A-Za-z0-9._-]+ scan$",
+        r"^ping -c \d+(?: -W \d+)? [\w.:-]+$",
+        r"^nslookup [\w.:-]+(?: [\w.:-]+)?$",
+        r"^traceroute(?: -n)? [\w.:-]+$",
+        r"^opkg (?:list|list-installed|list-upgradable)$",
+        r"^opkg (?:info|search) [a-zA-Z0-9._-]+$",
     ]
 
     @classmethod
     def validate_command(cls, command: str) -> tuple[bool, str]:
-        """Validate command before execution.
-
-        SECURITY: First line of defense against command injection.
-
-        Returns:
-            (allowed: bool, message: str)
-        """
-        if not command or not isinstance(command, str):
+        if not isinstance(command, str) or not command.strip():
             return False, "Empty or invalid command"
-
-        cmd_stripped = command.strip()
-        cmd_lower = cmd_stripped.lower()
-
-        for char in cls.DANGEROUS_METACHARACTERS:
-            if char in cmd_stripped:
-                if char == ">" and re.search(r"2>/dev/null", cmd_stripped):
-                    continue
-                return False, f"Blocked dangerous character: '{char}'"
-
-        for pattern in cls.BLOCKED_PATTERNS:
-            if re.search(pattern, cmd_lower):
-                return False, f"Blocked dangerous operation matching: '{pattern}'"
-
+        candidate = command.strip()
+        if re.search(r"[;&|`$<>\\(){}\n\r\x00]", candidate):
+            return False, "Shell control characters are forbidden"
         for pattern in cls.ALLOWED_PATTERNS:
-            if re.fullmatch(pattern, cmd_stripped):
+            if re.fullmatch(pattern, candidate):
                 return True, "Command approved"
-
-        return False, (
-            f"Unsupported command: '{cmd_stripped[:50]}...'\n"
-            f"Allowed: system info, WiFi status, DHCP leases, firewall rules, "
-            f"UCI configuration (read-only), package lists, network diagnostics"
-        )
-
-    # ALLOWED WRITE-ONLY COMMANDS (guarded by ENABLE_WRITE_OPERATIONS=1)
-    ALLOWED_WRITE_PATTERNS = [
-        r"^ifdown [a-z][a-z0-9._-]{0,14}$",
-        r"^ifup [a-z][a-z0-9._-]{0,14}$",
-        r"^/etc/init\.d/network (?:reload|restart)$",
-        r"^uci set [a-zA-Z0-9._-]+\.@?[a-zA-Z0-9._-]+\[\d+\]\.[a-zA-Z0-9._-]+=[^\s]+$",
-        r"^uci set [a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+=[^\s]+$",
-        r"^uci commit [a-zA-Z0-9._-]+$",
-        r"^ubus call system reboot$",
-    ]
+        return False, "Unsupported read command"
 
     @classmethod
-    def validate_write_command(cls, command: str) -> tuple[bool, str]:
-        """Validate a write-mode command before execution.
+    def validate_host_or_address(cls, value: str) -> str:
+        if not isinstance(value, str) or not _HOST.fullmatch(value):
+            raise ValidationError("Invalid host or address")
+        return value
 
-        Only active when ENABLE_WRITE_OPERATIONS=1.
-        Uses its own allowlist of safe write operations.
-        """
-        if not command or not isinstance(command, str):
-            return False, "Empty or invalid command"
-
-        cmd_stripped = command.strip()
-
-        for pattern in cls.ALLOWED_WRITE_PATTERNS:
-            if re.fullmatch(pattern, cmd_stripped):
-                return True, "Command approved"
-
-        return False, (
-            f"Unsupported write command: '{cmd_stripped[:50]}'\n"
-            f"Allowed: ifdown <interface>, ifup <interface>, /etc/init.d/network reload|restart"
-        )
+    @classmethod
+    def validate_device_identifier(
+        cls,
+        mac_address: str | None,
+        ip_address: str | None,
+    ) -> str:
+        if not mac_address and not ip_address:
+            raise ValidationError("Provide device MAC or IP")
+        if mac_address:
+            normalized = mac_address.lower().replace("-", ":")
+            if not _MAC.fullmatch(normalized):
+                raise ValidationError("Invalid MAC address format")
+            return normalized
+        assert ip_address is not None
+        try:
+            return str(ipaddress.ip_address(ip_address))
+        except ValueError as exc:
+            raise ValidationError("Invalid IP address format") from exc
 
     @classmethod
     def validate_interface_name(cls, name: str) -> str:
-        """Validate a network interface name (e.g. 'wan', 'lan', 'wwan0')."""
-        if not name or not re.match(r"^[a-z][a-z0-9._-]{0,14}$", name):
-            raise ValidationError(
-                f"Invalid interface name: '{name}'. "
-                "Must start with a letter and contain only lowercase"
-                " letters, digits, dots, underscores, or hyphens."
-            )
-        BLOCKED_INTERFACES = {"lo", "lo0"}
-        if name.lower() in BLOCKED_INTERFACES:
-            raise ValidationError(f"Interface '{name}' is blocked from restart")
+        if not isinstance(name, str) or not _INTERFACE.fullmatch(name):
+            raise ValidationError("Invalid interface name")
+        if name in {"lo", "lo0"}:
+            raise ValidationError("Loopback interfaces cannot be restarted")
         return name
 
     @classmethod
-    def sanitize_command(cls, command: str) -> str:
-        """Remove potentially dangerous characters from a command string.
-
-        SECURITY: Second line of defense against command injection.
-
-        Returns:
-            Sanitized command (may be empty if everything is removed).
-        """
-        if not command:
-            return ""
-
-        dangerous_chars = [
-            ";",
-            "&",
-            "|",
-            "$",
-            "`",
-            "(",
-            ")",
-            "{",
-            "}",
-            "<",
-            ">",
-            "\n",
-            "\r",
-            "\\",
-            "\0",
-            "'",
-            '"',
-        ]
-
-        sanitized = command
-        for char in dangerous_chars:
-            sanitized = sanitized.replace(char, " ")
-
-        sanitized = re.sub(r"\s+", " ", sanitized).strip()
-        return sanitized
+    def validate_uci_config(cls, value: str) -> str:
+        if not isinstance(value, str) or not _CONFIG.fullmatch(value):
+            raise ValidationError("Invalid UCI configuration identifier")
+        return value
 
     @classmethod
-    def is_safe_search_term(cls, term: str) -> bool:
-        """Check whether a search term is safe.
+    def validate_readable_uci_config(cls, value: str) -> str:
+        config = cls.validate_uci_config(value)
+        if config not in cls.READABLE_UCI_CONFIGS:
+            allowed = ", ".join(sorted(cls.READABLE_UCI_CONFIGS))
+            raise ValidationError(f"Configuration {config!r} not supported. Allowed: {allowed}")
+        return config
 
-        Used by search_router_logs, search_dhcp_logs, etc.
+    @classmethod
+    def validate_uci_identifier(cls, value: str, *, field: str) -> str:
+        if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
+            raise ValidationError(f"Invalid UCI {field}")
+        return value
 
-        Returns:
-            True if term is safe, False otherwise.
-        """
-        if not term or len(term) > 100:
-            return False
+    @classmethod
+    def validate_uci_value(cls, value: str) -> str:
+        if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 512:
+            raise ValidationError("UCI value must contain 1-512 UTF-8 bytes")
+        if _DANGEROUS_VALUE.search(value):
+            raise ValidationError("UCI value contains shell control characters")
+        return value
 
-        if not re.match(r"^[a-zA-Z0-9\s\.\-\:_]+$", term):
-            return False
+    @classmethod
+    def build_uci_set_command(cls, config: str, section: str, option: str, value: str) -> str:
+        config = cls.validate_uci_config(config)
+        section = cls.validate_uci_identifier(section, field="section")
+        option = cls.validate_uci_identifier(option, field="option")
+        value = cls.validate_uci_value(value)
+        assignment = f"{config}.{section}.{option}={value}"
+        return f"uci set {shlex.quote(assignment)}"
 
-        dangerous_sequences = [";", "&&", "||", "|", "$", "`", "(", ")", "{", "}", "<", ">"]
-        for seq in dangerous_sequences:
-            if seq in term:
-                return False
+    @classmethod
+    def validate_write_command(cls, command: str) -> tuple[bool, str]:
+        if not isinstance(command, str) or not command.strip():
+            return False, "Empty or invalid command"
+        if any(control in command for control in ("\n", "\r", "\x00")):
+            return False, "Control characters are forbidden"
+        try:
+            argv = shlex.split(command, posix=True)
+        except ValueError:
+            return False, "Malformed command quoting"
 
-        return True
+        try:
+            if len(argv) == 2 and argv[0] in {"ifdown", "ifup"}:
+                cls.validate_interface_name(argv[1])
+                return True, "Command approved"
+            if argv in (["/etc/init.d/network", "reload"], ["/etc/init.d/network", "restart"]):
+                return True, "Command approved"
+            if len(argv) == 3 and argv[:2] == ["uci", "set"]:
+                path, separator, value = argv[2].partition("=")
+                if not separator:
+                    raise ValidationError("Missing UCI assignment")
+                parts = path.split(".")
+                if len(parts) != 3:
+                    raise ValidationError("UCI assignment must be config.section.option")
+                cls.validate_uci_config(parts[0])
+                cls.validate_uci_identifier(parts[1], field="section")
+                cls.validate_uci_identifier(parts[2], field="option")
+                cls.validate_uci_value(value)
+                return True, "Command approved"
+            if len(argv) == 3 and argv[:2] == ["uci", "commit"]:
+                cls.validate_uci_config(argv[2])
+                return True, "Command approved"
+            if argv == ["ubus", "call", "system", "reboot"]:
+                return True, "Command approved"
+        except ValidationError as exc:
+            return False, str(exc)
+        return False, "Unsupported write command"
+
+    @staticmethod
+    def is_safe_search_term(term: str) -> bool:
+        return bool(
+            isinstance(term, str)
+            and 0 < len(term) <= 100
+            and re.fullmatch(r"[A-Za-z0-9 .\-:_]+", term)
+        )
