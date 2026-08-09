@@ -43,6 +43,7 @@ class Settings:
     mcp_transport: str
     mock_mode: bool
     insecure_skip_host_key_check: bool = False
+    health_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -102,6 +103,7 @@ class Settings:
             audit_log_file=Path(os.getenv("AUDIT_LOG_FILE", "/app/log/openwrt_mcp.log")),
             mcp_transport=transport,
             mock_mode=mock_mode,
+            health_enabled=_bool_env("HEALTH_ENABLED", True),
         )
 
 
