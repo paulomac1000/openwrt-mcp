@@ -60,6 +60,9 @@ implemented:
   - diagnostic evidence and the minimal protected-release payload are uploaded as separate artifacts
   - real-router acceptance tests are executable and environment-gated rather than empty TODO bodies
   - CI enforces that the future write-profile test is the only owned NOT_IMPLEMENTED placeholder
+  - cancelled and timed-out remote commands are terminated with SIGKILL before channel close, leaving no orphaned process on the router
+  - mock router data mirrors real OpenWRT output shapes: realistic uci key/value samples, logread lines, DHCP events, wifi scan fields, and self-consistent lease resolution
+  - e2e smoke tests drive the real stdio subprocess through the official MCP client (catalog, closed schemas, kernel invocation, sanitized controlled errors)
 not_claimed:
   - L2 remote principal authentication, capability authorization, or target-binding enforcement
   - stable router identity enrollment or target revalidation
@@ -67,10 +70,18 @@ not_claimed:
   - Windows or other non-POSIX host support
   - Python 3.13 or 3.14 runtime support
   - compliance with the red ai-skills c5ba4091cd8a3043fe4ba9715a3bda96d62a05e4 candidate contract
-  - production verification against a real OpenWRT router until the lab record is green
 pending_evidence:
-  - real-router lab record with 5 passed, 0 failed, 0 skipped for tests/integration/test_real_router_acceptance.py
+  - provider-backed hosted CI on the exact final SHA of this branch
   - independent latest-format adoption assessment after a green unified ai-skills baseline exists
+real_router_lab_record:
+  environment: >-
+    Isolated OpenWRT laboratory router with dropbear SSH server, OpenWRT 23.05
+    line, kernel 5.15.150. Full environment details and JUnit XML are retained
+    externally and are not committed to the repository.
+  command: >-
+    OPENWRT_LAB_RUN=1 OPENWRT_MOCK_MODE=0 OPENWRT_LAB_SLOW_TARGET=198.51.100.254
+    python -m pytest -vv -m lab tests/integration/test_real_router_acceptance.py
+  result: 5 passed, 0 failed, 0 skipped (2026-08-09, Python 3.12.13, asyncssh 2.24.0, mcp 2.0.0)
 deferred_non_profile_evidence:
   - NOT_IMPLEMENTED real-router write authorization/approval workflow if a future profile activates write capabilities
 waivers: []

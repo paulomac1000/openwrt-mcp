@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.0] — 2026-08-09
+
+### Completed — AI Skills migration verification and hardening
+
+- verified the ai-skills standards lock against the upstream repository: `standards-lock.yaml` pins the green immutable `main` revision `661ff01a` (skill version 1.2.0); the unmerged `fix/unified-contract-release-hardening` candidate `c5ba409` was re-confirmed red upstream and remains intentionally unadopted
+- fixed cancelled and timed-out SSH commands now receive `SIGKILL` before channel close; previously dropbear/busybox left the remote `ping` running as an orphan after session invalidation (proven by real-router lab tests)
+- made mock router data mirror real OpenWRT output shapes: realistic `uci show` key/value samples per allowlisted config, logread-style log lines, dnsmasq DHCP events with derived event types, wifi scan `bssid`/`mode` fields, and self-consistent lease resolution in `get_device_dhcp_details`
+- added `tests/unit/test_mock_realism.py` (8 cases) locking mock/real output parity and internal consistency
+- added `tests/smoke/test_stdio_smoke.py` (2 e2e cases) driving the real server subprocess through the official MCP client: catalog, closed schemas, kernel invocation, and sanitized controlled errors
+- strengthened SSH hardening tests to assert the remote process is killed on cancellation, timeout, and output-limit paths
+- recorded the real-router laboratory acceptance run: **5 passed, 0 failed, 0 skipped** (2026-08-09, Python 3.12.13, asyncssh 2.24.0, mcp 2.0.0) against an isolated OpenWRT 23.05/dropbear router
+- deployed the locally built container image in `/var/apps/ha-mcp-stack` replacing the remote GHCR image: hardened L1 stdio profile with verified host keys, `stdin_open`, group-mapped key access, and `/live` python healthcheck; e2e smoke against the real router passes
+
 ## [1.3.0] — 2026-08-07
 
 ### Review follow-up

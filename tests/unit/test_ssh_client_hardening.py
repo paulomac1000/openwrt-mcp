@@ -53,8 +53,14 @@ class FakeProcess:
         self.stderr = FakeReader(stderr, delay=delay)
         self.exit_status = exit_status
         self.closed = False
+        self.killed = False
         self._waited = False
         self._on_wait_closed = on_wait_closed
+
+    def kill(self) -> None:
+        if self.closed:
+            raise OSError("channel is not open")
+        self.killed = True
 
     def close(self) -> None:
         self.closed = True
@@ -193,6 +199,7 @@ async def test_output_capture_is_bounded_before_decode_and_discards_session(
     assert client._connection is None  # noqa: SLF001
     assert connection.closed is True
     assert all(process.closed for process in connection.processes)
+    assert all(process.killed for process in connection.processes)
 
 
 async def test_cancellation_discards_session_and_next_call_reconnects(
@@ -214,6 +221,7 @@ async def test_cancellation_discards_session_and_next_call_reconnects(
 
     assert first.closed is True
     assert first.processes[0].closed is True
+    assert first.processes[0].killed is True
     assert client._connection is None  # noqa: SLF001
 
     stdout, error, code = await client.execute("ubus call system info")
@@ -238,6 +246,7 @@ async def test_timeout_discards_process_and_session(
     assert (stdout, error, code) == ("", "Timeout after 1s", 124)
     assert connection.closed is True
     assert connection.processes[0].closed is True
+    assert connection.processes[0].killed is True
     assert client._connection is None  # noqa: SLF001
 
 

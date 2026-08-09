@@ -270,6 +270,12 @@ class SSHConnection:
                 await asyncio.gather(*read_tasks, return_exceptions=True)
             if process is not None:
                 try:
+                    # SIGKILL first: closing the channel/connection alone leaves the
+                    # remote busybox/dropbear command running as an orphan.
+                    process.kill()
+                except (OSError, ValueError):
+                    pass
+                try:
                     process.close()
                     await asyncio.wait_for(process.wait_closed(), timeout=_CLOSE_TIMEOUT_SECONDS)
                 except BaseException:
