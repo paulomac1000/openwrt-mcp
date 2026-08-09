@@ -127,6 +127,7 @@ async def test_system_wifi_dhcp_and_firewall_parsing(
     leases = await explorer.list_dhcp_leases()
     firewall = await explorer.get_firewall_rules()
     assert connection["model"] == "MockBoard"
+    assert system["partial"] is False
     assert system["memory_used_percent"] == 75.0
     assert system["uptime"] == "1 days, 01:01:01"
     assert wifi["interfaces"][0]["clients_count"] == 1
@@ -150,6 +151,7 @@ async def test_config_package_log_and_dhcp_workflows(
     assert search["results_count"] == 1
     assert static["static_leases_count"] == 1
     assert events["events"][0]["event_type"] == "ack"
+    assert details["partial"] is False
     assert details["is_currently_connected"] is True
     assert details["has_static_reservation"] is True
 
@@ -172,7 +174,7 @@ async def test_historical_diagnostics_and_context_contracts(
         "health": "excellent",
     }
     assert context["partial"] is False
-    assert context["schema_version"] == "1.0"
+    assert context["schema_version"] == "2.0"
     assert context["kernel"] == "6.6"
     assert context["cpu_load_1min"] == 0.25
     assert context["wifi_clients_total"] == 1
@@ -191,6 +193,8 @@ async def test_network_tool_dtos_are_backward_compatible(
     assert lookup["resolved"] is True
     assert scan["networks_found"] == 1
     assert scan["networks"][0]["ssid"] == "Neighbor"
+    assert scan["networks"][0]["mode"] == "Master"
+    assert scan["networks"][0]["channel"] == "6"
 
 
 @pytest.mark.parametrize(
