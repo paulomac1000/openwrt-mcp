@@ -1,6 +1,7 @@
 _EXPECTED_LAB_TESTS = {
     "test_real_router_wrong_host_key_never_opens_command_session",
     "test_real_router_official_mcp_read_smoke",
+    "test_real_router_all_active_tools_execute_successfully",
     "test_real_router_cancellation_closes_session_and_kills_remote_command",
     "test_real_router_timeout_closes_session_and_kills_remote_command",
     "test_real_router_response_byte_limit_is_enforced",
