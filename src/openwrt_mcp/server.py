@@ -237,16 +237,22 @@ def run_readiness_probe_loop(
 def main() -> None:
     settings = load_settings()
     app = build_application(settings)
-    state = HealthState(started_at=time.monotonic())
-    health_server = start_health_server(app, state)
     stop_event = threading.Event()
-    probe_thread = threading.Thread(
-        target=run_readiness_probe_loop,
-        args=(app, state, stop_event),
-        daemon=True,
-        name="ReadinessProbe",
-    )
-    probe_thread.start()
+    health_server: HTTPServer | None = None
+    probe_thread: threading.Thread | None = None
+
+    if settings.health_enabled:
+        state = HealthState(started_at=time.monotonic())
+        health_server = start_health_server(app, state)
+        probe_thread = threading.Thread(
+            target=run_readiness_probe_loop,
+            args=(app, state, stop_event),
+            daemon=True,
+            name="ReadinessProbe",
+        )
+        probe_thread.start()
+    else:
+        logger.info("Loopback health listener disabled by HEALTH_ENABLED")
 
     try:
         logger.info(
@@ -256,9 +262,11 @@ def main() -> None:
         app.mcp.run(transport="stdio")
     finally:
         stop_event.set()
-        probe_thread.join(timeout=2)
-        health_server.shutdown()
-        health_server.server_close()
+        if probe_thread is not None:
+            probe_thread.join(timeout=2)
+        if health_server is not None:
+            health_server.shutdown()
+            health_server.server_close()
 
 
 if __name__ == "__main__":
