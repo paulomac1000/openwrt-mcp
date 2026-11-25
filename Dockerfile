@@ -13,6 +13,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# Apply Debian security updates while retaining the pinned base-image digest.
+# The final artifact is still re-verified by CI and scanned before promotion.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin openwrt \
     && mkdir -p /app/log /app/keys \
     && chown -R openwrt:openwrt /app
