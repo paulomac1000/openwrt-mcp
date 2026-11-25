@@ -67,7 +67,7 @@ jobs:
           test "$(git -C .trusted/workflow-auditor rev-parse HEAD)" = "$WORKFLOW_AUDITOR_SHA"
           test -s requirements-runtime.lock
           test -s requirements-dev.lock
-          grep -q '^mcp==2\.0\.0 \\' requirements-runtime.lock
+          grep -q '^mcp==2\.3\.0 \\' requirements-runtime.lock
           grep -q '^asyncssh==2\.24\.0 \\' requirements-runtime.lock
 
       - name: Install exact development environment

@@ -78,7 +78,7 @@ def generated_schema(*, required: list[str] | None = None) -> dict[str, Any]:
 
 def test_private_sdk_compatibility_is_version_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mcp_compat, "_installed_mcp_version", lambda: "2.0.1")
-    with pytest.raises(RuntimeError, match="only supports mcp==2.0.0"):
+    with pytest.raises(RuntimeError, match="only supports mcp==2.3.0"):
         mcp_compat.enforce_strict_input_schema(
             official_like(),
             "ping_host",
@@ -92,7 +92,7 @@ def test_private_sdk_compatibility_publishes_exact_kernel_schema(
     FakeArgModel.model_config = {"extra": "ignore"}
     FakeArgModel.rebuilt = False
     FakeArgModel.schema = generated_schema()
-    monkeypatch.setattr(mcp_compat, "_installed_mcp_version", lambda: "2.0.0")
+    monkeypatch.setattr(mcp_compat, "_installed_mcp_version", lambda: "2.3.0")
     mcp = official_like()
     expected = expected_schema()
 
@@ -114,7 +114,7 @@ def test_private_sdk_compatibility_fails_closed_on_wrapper_field_drift(
         "properties": {"host": {}, "unexpected": {}},
         "required": ["host"],
     }
-    monkeypatch.setattr(mcp_compat, "_installed_mcp_version", lambda: "2.0.0")
+    monkeypatch.setattr(mcp_compat, "_installed_mcp_version", lambda: "2.3.0")
     with pytest.raises(RuntimeError, match="parameters.*disagree"):
         mcp_compat.enforce_strict_input_schema(
             official_like(),
@@ -127,7 +127,7 @@ def test_private_sdk_compatibility_fails_closed_on_required_field_drift(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     FakeArgModel.schema = generated_schema(required=[])
-    monkeypatch.setattr(mcp_compat, "_installed_mcp_version", lambda: "2.0.0")
+    monkeypatch.setattr(mcp_compat, "_installed_mcp_version", lambda: "2.3.0")
     with pytest.raises(RuntimeError, match="required fields.*disagree"):
         mcp_compat.enforce_strict_input_schema(
             official_like(),
@@ -139,7 +139,7 @@ def test_private_sdk_compatibility_fails_closed_on_required_field_drift(
 def test_private_sdk_compatibility_rejects_open_kernel_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(mcp_compat, "_installed_mcp_version", lambda: "2.0.0")
+    monkeypatch.setattr(mcp_compat, "_installed_mcp_version", lambda: "2.3.0")
     schema = expected_schema()
     schema["additionalProperties"] = True
     with pytest.raises(RuntimeError, match="not closed"):

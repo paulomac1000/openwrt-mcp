@@ -11,7 +11,7 @@ evidence_binding:
     GitHub Actions records and the pull-request evidence summary, avoiding a
     self-referential SHA inside the candidate commit.
   recurring_provider_evidence:
-    - exact-revision hosted CI with official MCP SDK 2.0.0
+    - exact-revision hosted CI with official MCP SDK 2.3.0
     - exact-wheel modern and legacy stdio subprocess smoke outside the checkout
     - exact-container modern and legacy stdio subprocess smoke
     - Ruff, mypy strict, Bandit, pip-audit, branch coverage >= 90%, wheel and image checks
@@ -35,7 +35,7 @@ baseline_policy:
     agree.
 implemented:
   - package and public capability contract are versioned 2.0.0 for the breaking migration from the published 1.x line
-  - official MCP Python SDK 2.0.0 is the required runtime dependency
+  - official MCP Python SDK 2.3.0 is the required runtime dependency
   - supported host interpreter is POSIX CPython 3.12.x; unsupported host identity fails closed
   - stdio is the only MCP invocation transport in the supported profile
   - loopback liveness/readiness is optional and can be disabled without blocking stdio startup

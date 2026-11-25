@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-SUPPORTED_MCP_SDK_VERSION = "2.0.0"
+SUPPORTED_MCP_SDK_VERSION = "2.3.0"
 
 
 def _installed_mcp_version() -> str:
@@ -22,9 +22,9 @@ def enforce_strict_input_schema(
     name: str,
     expected_schema: Mapping[str, Any],
 ) -> None:
-    """Bind MCP 2.0.0 registration to the kernel-owned closed input schema.
+    """Bind MCP 2.3.0 registration to the kernel-owned closed input schema.
 
-    MCP 2.0.0 exposes no public registration option for ``extra='forbid'`` and
+    MCP 2.3.0 exposes no public registration option for ``extra='forbid'`` and
     derives its advertised schema from the Python wrapper rather than the
     transport-independent kernel manifest. Keep that private-SDK dependency
     isolated here, fail closed if the expected internals move, and publish the

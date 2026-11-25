@@ -17,13 +17,13 @@ from openwrt_mcp.application import (
     InvocationKernel,
     KernelError,
 )
-from openwrt_mcp.mcp_compat import enforce_strict_input_schema
+from openwrt_mcp.mcp_compat import SUPPORTED_MCP_SDK_VERSION, enforce_strict_input_schema
 from openwrt_mcp.observability import process_caller_context
 from openwrt_mcp.settings import Settings
 
 SERVER_PROFILE = "l1-local-read-only-stdio"
 SDK_FAMILY = "official-python-mcp"
-SDK_VERSION = "2.0.0"
+SDK_VERSION = SUPPORTED_MCP_SDK_VERSION
 PROTOCOL_VERSIONS = ("2026-07-28", "2025-11-25")
 
 _WRITE_INACTIVE_REASON = (

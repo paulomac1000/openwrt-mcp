@@ -7,7 +7,7 @@ Hardened read-only MCP server for observing one OpenWRT router over SSH.
 This is intentionally an **L1 local read-only stdio** profile. It does not claim L2 authentication, principal authorization, or stable target binding.
 
 - CPython `3.12.x` on a POSIX host
-- Official MCP Python SDK `2.0.0`
+- Official MCP Python SDK `2.3.0`
 - MCP stdio transport only
 - 19 active read capabilities
 - 5 historical write/destructive capability names retained as inactive metadata

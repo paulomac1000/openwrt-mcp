@@ -16,6 +16,7 @@
 - redacted passphrases, private-key blocks and URL credentials; stopped recording SSH command arguments and echoing UCI set errors
 - added installed package inventory on APK-based OpenWrt, disclosed sampled-data truncation, and stopped inferring repeater mode from the absence of AP interfaces
 - verified wheel digest and runtime version during image build and exposed installed image provenance through readiness and MCP capability discovery
+- updated the required official MCP Python SDK from `2.0.0` to `2.3.0` to close known dependency vulnerabilities; overrode the vulnerable `pyjwt` 2.13.0 and `opentelemetry-api` 1.44.0 transitives with `2.15.1`/`1.45.2`, upgraded the dev toolchain `pip` to `26.3`, `setuptools` to `84.2.1`, `pip-tools` to `7.7.0`, and `pytest` to `9.0.3` with `urllib3`/`msgpack`/`certifi`/`filelock` transitive overrides for their advisories, and unified the advertised SDK version with the compatibility-shim constant; refreshed both hashed lockfiles
 - updated the observed red `ai-skills` unified-contract candidate to `b54fc6b27ea80b36a70d5de73445970e17f55789`; the project intentionally keeps the last green immutable baseline `661ff01a5e70d58d6c94a12545b24647e52063ed` until upstream schema/docs/validators and CI are internally consistent
 
 The `1.3.0` and `1.4.0` entries below are historical migration checkpoints from this unmerged branch. They were never published repository tags and are superseded by the `2.0.0` release contract.

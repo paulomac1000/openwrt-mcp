@@ -92,6 +92,6 @@ Local deterministic verification:
 .venv/bin/python scripts/ci.py
 ```
 
-The local/provider deterministic gate requires at least 90% branch coverage. Provider-backed verification additionally runs exact `mcp==2.0.0`, official-client cancellation/error/schema acceptance, real subprocess stdio smoke for modern and legacy protocol revisions, Ruff, mypy strict, Bandit, pip-audit, exact-wheel smoke, and exact-container smoke.
+The local/provider deterministic gate requires at least 90% branch coverage. Provider-backed verification additionally runs exact `mcp==2.3.0`, official-client cancellation/error/schema acceptance, real subprocess stdio smoke for modern and legacy protocol revisions, Ruff, mypy strict, Bandit, pip-audit, exact-wheel smoke, and exact-container smoke.
 
 Real-router verification is executable rather than a prose TODO. `docs/production-acceptance.md` defines the isolated-lab environment and the six `pytest -m lab` cases for host-key rejection, official MCP read smoke, execution of all 19 active tools, cancellation cleanup, timeout cleanup, and real-response size limiting. The current candidate must produce **6 passed, 0 failed, 0 skipped** for its exact final SHA before it is described as production verified against real OpenWRT. The future write authorization/approval test remains an explicit `NOT_IMPLEMENTED` placeholder because write capabilities are inactive and outside this L1 profile.

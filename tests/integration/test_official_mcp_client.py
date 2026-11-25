@@ -1,4 +1,4 @@
-"""Official MCP SDK 2.0.0 in-memory acceptance tests."""
+"""Official MCP SDK 2.3.0 in-memory acceptance tests."""
 
 from __future__ import annotations
 

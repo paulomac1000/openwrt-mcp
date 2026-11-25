@@ -122,7 +122,7 @@ async def test_capability_discovery_declares_l1_sdk_and_protocol(settings: Any) 
     assert result.success is True
     assert result.data["profile"] == "l1-local-read-only-stdio"
     assert result.data["sdk_family"] == "official-python-mcp"
-    assert result.data["sdk_version"] == "2.0.0"
+    assert result.data["sdk_version"] == "2.3.0"
     assert result.data["protocol_versions"] == ["2026-07-28", "2025-11-25"]
     assert result.data["supported_transports"] == ["stdio"]
     assert result.data["active_transports"] == ["stdio"]
