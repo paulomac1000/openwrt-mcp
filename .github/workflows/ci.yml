@@ -120,7 +120,11 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf build dist
-          python -m build --wheel --no-isolation
+          test -z "$(git status --porcelain --untracked-files=no)"
+          source_tree="$(mktemp -d)"
+          git archive "$CANDIDATE_SHA" | tar -x -C "$source_tree"
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$CANDIDATE_SHA")" \
+            python -m build --wheel --no-isolation --outdir "$PWD/dist" "$source_tree"
           test "$(find dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
           sha256sum dist/*.whl | tee wheel.sha256
 
@@ -131,14 +135,18 @@ jobs:
           /tmp/openwrt-wheel-smoke/bin/python -m pip install --require-hashes \
             -r requirements-runtime.lock
           /tmp/openwrt-wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
-          (cd /tmp && /tmp/openwrt-wheel-smoke/bin/python \
+          (cd /tmp && PATH="/tmp/openwrt-wheel-smoke/bin:$PATH" /tmp/openwrt-wheel-smoke/bin/python \
             -m openwrt_mcp.artifact_smoke)
 
       - name: Build exact container image once
         run: |
           set -euo pipefail
+          sha256sum --check wheel.sha256
+          app_version="$(python -c 'from openwrt_mcp import __version__; print(__version__)')"
           docker build \
             --build-arg SOURCE_REVISION="$CANDIDATE_SHA" \
+            --build-arg APP_VERSION="$app_version" \
+            --build-arg WHEEL_SHA256="$(cut -d ' ' -f1 wheel.sha256)" \
             --tag "openwrt-mcp:ci-$CANDIDATE_SHA" .
 
       - name: Smoke exact container image through real stdio
@@ -180,6 +188,12 @@ jobs:
 
           inspect = json.loads(Path("image-inspect.json").read_text(encoding="utf-8"))[0]
           wheel = next(Path("dist").glob("*.whl"))
+          labels = inspect["Config"]["Labels"]
+          from openwrt_mcp import __version__
+          if labels["org.opencontainers.image.version"] != __version__:
+              raise SystemExit("image version label mismatch")
+          if "sha256:" + labels["io.openwrt-mcp.wheel.sha256"] != digest(str(wheel)):
+              raise SystemExit("image wheel label mismatch")
           payload = {
               "schema_version": 1,
               "profile": "l1-local-read-only-stdio",
@@ -197,6 +211,7 @@ jobs:
                   "local_reference": f"openwrt-mcp:ci-{os.environ['CANDIDATE_SHA']}",
                   "image_id": inspect["Id"],
                   "source_revision": inspect["Config"]["Labels"]["org.opencontainers.image.revision"],
+                  "version": labels["org.opencontainers.image.version"],
               },
               "artifacts": {
                   "wheel": {"path": str(wheel), "digest": digest(str(wheel))},

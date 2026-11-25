@@ -61,7 +61,18 @@ jobs:
           PY
           docker load --input image.tar.gz
           image="openwrt-mcp:ci-$EXPECTED_SHA"
-          test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$EXPECTED_SHA"
+          docker image inspect "$image" | python -c '
+          import json, os, sys
+          from pathlib import Path
+          evidence = json.loads(Path("ci-evidence.json").read_text(encoding="utf-8"))
+          image = json.load(sys.stdin)[0]
+          labels = image["Config"]["Labels"]
+          if (image["Id"] != evidence["image"]["image_id"]
+              or labels["org.opencontainers.image.revision"] != os.environ["EXPECTED_SHA"]
+              or labels["org.opencontainers.image.version"] != evidence["image"]["version"]
+              or "sha256:" + labels["io.openwrt-mcp.wheel.sha256"] != evidence["artifacts"]["wheel"]["digest"]):
+              raise SystemExit("release image provenance mismatch")
+          '
 
   publish:
     if: github.event.workflow_run.conclusion == 'success'
