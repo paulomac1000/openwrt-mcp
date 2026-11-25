@@ -688,9 +688,7 @@ class OpenWRTExplorer:
         if code == 0 and not stdout.lstrip().startswith("Usage:"):
             networks = self._parse_wifi_scan(stdout)
         elif (
-            code == 1
-            and (stderr or stdout)
-            and not self._is_ssh_transport_error(stderr or stdout)
+            code == 1 and (stderr or stdout) and not self._is_ssh_transport_error(stderr or stdout)
         ):
             stdout, stderr, code = await self._run(f"iw dev {radio} scan dump")
             if code != 0:
