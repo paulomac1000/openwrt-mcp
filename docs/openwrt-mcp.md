@@ -47,6 +47,8 @@ Composite reads do not invent plausible values when a source is unavailable. `ge
 
 Tool callers cannot override timeouts. Each manifest owns a deadline that includes waiting for the target lock. Non-concurrent-safe capabilities use a whole-target lock by default.
 
+`max_response_bytes` is the public byte budget for the final serialized MCP `CallToolResult`; its minimum is 512 bytes. The invocation kernel applies the same declared budget earlier to the governed `KernelResult`, including controlled failures, validation failures, inactive capabilities, timeouts, and internal errors. The official adapter then measures the complete SDK-serialized result so duplicated `text` and `structuredContent` cannot bypass the budget. An oversized result is replaced by a compact `RESPONSE_TOO_LARGE` error without echoing the oversized payload. Bytes—not Python characters—are counted, preserving correct UTF-8 accounting.
+
 Cancellation is re-raised. AsyncSSH command timeout, task cancellation, or connection loss detaches and closes the active SSH session before the request returns or propagates cancellation. Cleanup is itself bounded; a stuck close is aborted. A subsequent request must establish a fresh SSH session. Neither reads nor writes are automatically replayed after ambiguous connection loss.
 
 ## MCP result mapping
