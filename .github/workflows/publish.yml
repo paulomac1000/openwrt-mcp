@@ -18,7 +18,7 @@ jobs:
   verify-ci-payload:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     permissions:
       actions: read
       contents: read
@@ -26,6 +26,10 @@ jobs:
       evidence_sha256: ${{ steps.verify.outputs.evidence_sha256 }}
       image_sha256: ${{ steps.verify.outputs.image_sha256 }}
       image_id: ${{ steps.verify.outputs.image_id }}
+      os_report_sha256: ${{ steps.os-scan.outputs.os_report_sha256 }}
+      os_summary_sha256: ${{ steps.os-scan.outputs.os_summary_sha256 }}
+      os_version_sha256: ${{ steps.os-scan.outputs.os_version_sha256 }}
+      os_critical_count: ${{ steps.os-scan.outputs.os_critical_count }}
     steps:
       - name: Download minimal exact release payload
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
@@ -82,6 +86,98 @@ jobs:
           echo "image_sha256=$(sha256sum image.tar.gz | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "image_id=$(docker image inspect --format '{{.Id}}' "$image")" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare exact image vulnerability scan
+        run: mkdir -p release-payload/os-scan
+
+      - name: Scan exact image archive with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          input: release-payload/image.tar.gz
+          scanners: vuln
+          vuln-type: os,library
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          format: json
+          output: release-payload/os-scan/trivy-image.json
+          exit-code: '0'
+          timeout: 20m0s
+          version: v0.76.2
+          cache: 'false'
+
+      - name: Bind OS scan verdict to exact release payload
+        id: os-scan
+        run: |
+          set -euo pipefail
+          cd release-payload
+          trivy --version > os-scan/trivy-version.txt
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          report = json.loads(Path("os-scan/trivy-image.json").read_text())
+          if report.get("SchemaVersion") != 2:
+              raise SystemExit("unsupported Trivy report schema")
+          if not report.get("CreatedAt"):
+              raise SystemExit("Trivy report has no scan timestamp")
+          artifact_name = report.get("ArtifactName")
+          if not isinstance(artifact_name, str) or not artifact_name.endswith("image.tar.gz"):
+              raise SystemExit("Trivy report is not bound to the release image archive")
+          results = report.get("Results")
+          if not isinstance(results, list):
+              raise SystemExit("Trivy report has no results array")
+          os_results = [
+              result for result in results
+              if result.get("Class") == "os-pkgs" and "debian" in str(result.get("Target", "")).casefold()
+          ]
+          if not os_results:
+              raise SystemExit("Trivy report has no Debian OS package scan result")
+
+          totals = Counter()
+          results_summary = []
+          for result in results:
+              vulnerabilities = result.get("Vulnerabilities") or []
+              counts = Counter(item.get("Severity", "UNKNOWN") for item in vulnerabilities)
+              totals.update(counts)
+              results_summary.append({
+                  "target": result.get("Target"),
+                  "class": result.get("Class"),
+                  "type": result.get("Type"),
+                  "count": len(vulnerabilities),
+                  "severityCounts": dict(counts),
+              })
+          critical = totals["CRITICAL"]
+          summary = {
+              "scanner": Path("os-scan/trivy-version.txt").read_text().strip(),
+              "scannedAt": report.get("CreatedAt"),
+              "artifactName": artifact_name,
+              "ignoreFile": "none",
+              "osResultCount": len(os_results),
+              "totals": dict(totals),
+              "results": results_summary,
+          }
+          Path("os-scan/trivy-summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          if critical:
+              raise SystemExit(f"release blocked: {critical} CRITICAL OS vulnerabilities")
+          PY
+          echo "os_report_sha256=$(sha256sum os-scan/trivy-image.json | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "os_summary_sha256=$(sha256sum os-scan/trivy-summary.json | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "os_version_sha256=$(sha256sum os-scan/trivy-version.txt | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "os_critical_count=$critical" >> "$GITHUB_OUTPUT"
+
+      - name: Retain exact image vulnerability scan
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openwrt-mcp-os-scan-${{ github.run_id }}
+          path: release-payload/os-scan
+          if-no-files-found: error
+          retention-days: 90
+
   publish:
     if: github.event.workflow_run.conclusion == 'success'
     needs: verify-ci-payload
@@ -103,6 +199,14 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Download verified OS vulnerability scan
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: openwrt-mcp-os-scan-${{ github.run_id }}
+          path: release-payload/os-scan
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Re-verify and load exact smoke-tested image
         shell: bash
         env:
@@ -112,6 +216,10 @@ jobs:
           VERIFIED_IMAGE_SHA256: ${{ needs.verify-ci-payload.outputs.image_sha256 }}
           VERIFIED_EVIDENCE_SHA256: ${{ needs.verify-ci-payload.outputs.evidence_sha256 }}
           VERIFIED_IMAGE_ID: ${{ needs.verify-ci-payload.outputs.image_id }}
+          OS_REPORT_SHA256: ${{ needs.verify-ci-payload.outputs.os_report_sha256 }}
+          OS_SUMMARY_SHA256: ${{ needs.verify-ci-payload.outputs.os_summary_sha256 }}
+          OS_VERSION_SHA256: ${{ needs.verify-ci-payload.outputs.os_version_sha256 }}
+          OS_CRITICAL_COUNT: ${{ needs.verify-ci-payload.outputs.os_critical_count }}
         run: |
           set -euo pipefail
           cd release-payload
@@ -141,63 +249,17 @@ jobs:
           image="openwrt-mcp:ci-$EXPECTED_SHA"
           test "$(docker image inspect --format '{{.Id}}' "$image")" = "$VERIFIED_IMAGE_ID"
           test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$EXPECTED_SHA"
-
-      - name: Prepare exact image vulnerability scan
-        run: mkdir -p release-payload/os-scan
-
-      - name: Scan exact image archive with Trivy
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
-        with:
-          scan-type: image
-          input: release-payload/image.tar.gz
-          scanners: vuln
-          vuln-type: os,library
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          ignore-unfixed: false
-          format: json
-          output: release-payload/os-scan/trivy-image.json
-          exit-code: '0'
-          timeout: 20m0s
-          version: v0.76.2
-          cache: 'false'
-
-      - name: Block promotion on CRITICAL OS findings
-        run: |
-          set -euo pipefail
-          trivy --version > release-payload/os-scan/trivy-version.txt
+          printf '%s  trivy-image.json\n' "$OS_REPORT_SHA256" | sha256sum --check -
+          printf '%s  trivy-summary.json\n' "$OS_SUMMARY_SHA256" | sha256sum --check -
+          printf '%s  trivy-version.txt\n' "$OS_VERSION_SHA256" | sha256sum --check -
+          test "$OS_CRITICAL_COUNT" = "0"
           python - <<'PY'
           import json
-          from collections import Counter
-          from pathlib import Path
-
-          report = json.loads(Path("release-payload/os-scan/trivy-image.json").read_text())
-          totals = Counter()
-          results = []
-          for result in report.get("Results", []):
-              vulnerabilities = result.get("Vulnerabilities") or []
-              counts = Counter(item.get("Severity", "UNKNOWN") for item in vulnerabilities)
-              totals.update(counts)
-              results.append({
-                  "target": result.get("Target"),
-                  "type": result.get("Type"),
-                  "count": len(vulnerabilities),
-                  "severityCounts": dict(counts),
-              })
-          critical = totals["CRITICAL"]
-          summary = {
-              "scanner": Path("release-payload/os-scan/trivy-version.txt").read_text().strip(),
-              "scannedAt": report.get("CreatedAt"),
-              "artifactName": report.get("ArtifactName"),
-              "ignoreFile": "none",
-              "totals": dict(totals),
-              "results": results,
-          }
-          Path("release-payload/os-scan/trivy-summary.json").write_text(
-              json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-          )
-          print(json.dumps(summary, indent=2, sort_keys=True))
-          if critical:
-              raise SystemExit(f"release blocked: {critical} CRITICAL OS vulnerabilities")
+          summary = json.load(open("os-scan/trivy-summary.json", encoding="utf-8"))
+          if summary.get("ignoreFile") != "none" or summary.get("osResultCount", 0) < 1:
+              raise SystemExit("release OS scan evidence is incomplete or suppressed")
+          if summary.get("totals", {}).get("CRITICAL", 0) != 0:
+              raise SystemExit("release OS scan contains CRITICAL findings")
           PY
 
       - name: Log in to GHCR
