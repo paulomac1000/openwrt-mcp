@@ -21,6 +21,21 @@ from openwrt_mcp.validators import ValidationError
 
 Operation = Callable[..., Awaitable[dict[str, Any]]]
 _MISSING = object()
+_MIN_RESPONSE_BYTES = 512
+MIN_RESPONSE_BYTES = _MIN_RESPONSE_BYTES
+
+
+def json_byte_size(value: object) -> int:
+    """Return the canonical UTF-8 wire size used by kernel response budgets."""
+
+    return len(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +144,10 @@ class CapabilityManifest:
     inactive_reason: str | None = None
     concurrency_group: str | None = None
     input_schema: InputSchema = field(default_factory=InputSchema)
+
+    def __post_init__(self) -> None:
+        if self.max_response_bytes < _MIN_RESPONSE_BYTES:
+            raise ValueError(f"max_response_bytes must be at least {_MIN_RESPONSE_BYTES} bytes")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -268,6 +287,58 @@ class InvocationKernel:
         async with self._locks_guard:
             return self._locks.setdefault(key, asyncio.Lock())
 
+    def _bounded_result(
+        self,
+        result: KernelResult,
+        manifest: CapabilityManifest,
+        started: float,
+    ) -> KernelResult:
+        """Enforce one kernel-owned byte budget before a result leaves invoke."""
+
+        meta = (
+            result.meta
+            if result.meta is not None
+            else self._meta(
+                manifest.name,
+                started,
+                manifest,
+            )
+        )
+        try:
+            result_size = json_byte_size(result.as_dict())
+        except (TypeError, ValueError):
+            result = KernelResult.failed(
+                "INTERNAL",
+                "Operation returned a non-serializable response",
+                meta=meta,
+            )
+            result_size = json_byte_size(result.as_dict())
+
+        if result_size <= manifest.max_response_bytes:
+            return result
+
+        bounded = KernelResult.failed(
+            "RESPONSE_TOO_LARGE",
+            "Operation response exceeded its declared byte limit",
+            meta=meta,
+        )
+        if json_byte_size(bounded.as_dict()) <= manifest.max_response_bytes:
+            return bounded
+
+        # The observable error code and retryability remain stable even for the
+        # smallest supported manifest budget; request metadata is expendable.
+        bounded = KernelResult.failed(
+            "RESPONSE_TOO_LARGE",
+            "Operation response exceeded its declared byte limit",
+        )
+        bounded_size = json_byte_size(bounded.as_dict())
+        if bounded_size > manifest.max_response_bytes:
+            raise ValueError(
+                f"max_response_bytes cannot accommodate a bounded response "
+                f"({bounded_size} bytes required)"
+            )
+        return bounded
+
     def _meta(
         self,
         name: str,
@@ -294,30 +365,42 @@ class InvocationKernel:
         started = time.monotonic()
         try:
             manifest = self.registry.get(name)
-        except ValidationError as exc:
-            return KernelResult.failed("NOT_FOUND", str(exc))
+        except ValidationError:
+            return KernelResult.failed("NOT_FOUND", "Unknown capability")
 
         with request_context(request_id, caller=caller or self._default_caller):
             if not manifest.active:
-                return KernelResult.failed(
-                    "CAPABILITY_INACTIVE",
-                    manifest.inactive_reason or "Capability is inactive",
-                    meta=self._meta(name, started, manifest),
+                return self._bounded_result(
+                    KernelResult.failed(
+                        "CAPABILITY_INACTIVE",
+                        manifest.inactive_reason or "Capability is inactive",
+                        meta=self._meta(name, started, manifest),
+                    ),
+                    manifest,
+                    started,
                 )
             operation = self._operations.get(name)
             if operation is None:
-                return KernelResult.failed(
-                    "REGISTRATION_ERROR",
-                    "No operation registered for active capability",
-                    meta=self._meta(name, started, manifest),
+                return self._bounded_result(
+                    KernelResult.failed(
+                        "REGISTRATION_ERROR",
+                        "No operation registered for active capability",
+                        meta=self._meta(name, started, manifest),
+                    ),
+                    manifest,
+                    started,
                 )
             try:
                 normalized = manifest.input_schema.validate(arguments)
             except ValidationError as exc:
-                return KernelResult.failed(
-                    "INVALID_PARAM",
-                    str(exc),
-                    meta=self._meta(name, started, manifest),
+                return self._bounded_result(
+                    KernelResult.failed(
+                        "INVALID_PARAM",
+                        str(exc),
+                        meta=self._meta(name, started, manifest),
+                    ),
+                    manifest,
+                    started,
                 )
 
             deadline_seconds = max(0.001, manifest.timeout_ms / 1000)
@@ -337,61 +420,62 @@ class InvocationKernel:
                 if isinstance(result, dict) and result.get("success") is False:
                     error = result.get("error")
                     if isinstance(error, dict):
-                        return KernelResult.failed(
-                            str(error.get("code", "UPSTREAM_FAILURE")),
-                            str(error.get("message", "Operation failed")),
-                            retryable=bool(error.get("retryable", False) and manifest.retryable),
-                            suggestion=error.get("suggestion"),
-                            meta=meta,
+                        return self._bounded_result(
+                            KernelResult.failed(
+                                str(error.get("code", "UPSTREAM_FAILURE")),
+                                str(error.get("message", "Operation failed")),
+                                retryable=bool(
+                                    error.get("retryable", False) and manifest.retryable
+                                ),
+                                suggestion=error.get("suggestion"),
+                                meta=meta,
+                            ),
+                            manifest,
+                            started,
                         )
-                    return KernelResult.failed(
-                        "UPSTREAM_FAILURE",
-                        str(error or "Operation failed"),
-                        meta=meta,
+                    return self._bounded_result(
+                        KernelResult.failed(
+                            "UPSTREAM_FAILURE",
+                            str(error or "Operation failed"),
+                            meta=meta,
+                        ),
+                        manifest,
+                        started,
                     )
                 candidate = KernelResult.ok(result, meta=meta)
-                try:
-                    response_size = len(
-                        json.dumps(
-                            candidate.as_dict(),
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        ).encode("utf-8")
-                    )
-                except (TypeError, ValueError):
-                    return KernelResult.failed(
-                        "INTERNAL",
-                        "Operation returned a non-serializable response",
-                        meta=meta,
-                    )
-                if response_size > manifest.max_response_bytes:
-                    return KernelResult.failed(
-                        "RESPONSE_TOO_LARGE",
-                        "Operation response exceeded its declared byte limit",
-                        meta=meta,
-                    )
-                return candidate
+                return self._bounded_result(candidate, manifest, started)
             except asyncio.CancelledError:
                 raise
             except TimeoutError:
-                return KernelResult.failed(
-                    "TIMEOUT",
-                    f"{name} exceeded its declared deadline",
-                    retryable=manifest.retryable,
-                    meta=self._meta(name, started, manifest),
+                return self._bounded_result(
+                    KernelResult.failed(
+                        "TIMEOUT",
+                        f"{name} exceeded its declared deadline",
+                        retryable=manifest.retryable,
+                        meta=self._meta(name, started, manifest),
+                    ),
+                    manifest,
+                    started,
                 )
             except ValidationError as exc:
-                return KernelResult.failed(
-                    "INVALID_PARAM",
-                    str(exc),
-                    meta=self._meta(name, started, manifest),
+                return self._bounded_result(
+                    KernelResult.failed(
+                        "INVALID_PARAM",
+                        str(exc),
+                        meta=self._meta(name, started, manifest),
+                    ),
+                    manifest,
+                    started,
                 )
             except Exception:
-                return KernelResult.failed(
-                    "INTERNAL",
-                    "Internal server error",
-                    meta=self._meta(name, started, manifest),
+                return self._bounded_result(
+                    KernelResult.failed(
+                        "INTERNAL",
+                        "Internal server error",
+                        meta=self._meta(name, started, manifest),
+                    ),
+                    manifest,
+                    started,
                 )
 
 

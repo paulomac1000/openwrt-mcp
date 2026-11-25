@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -8,6 +9,8 @@ import pytest
 from openwrt_mcp.application import (
     CapabilityManifest,
     CapabilityRegistry,
+    InputField,
+    InputSchema,
     InvocationKernel,
     decode_kernel_response,
 )
@@ -33,6 +36,17 @@ def manifest(name: str, **overrides: Any) -> CapabilityManifest:
     }
     values.update(overrides)
     return CapabilityManifest(**values)
+
+
+def kernel_result_bytes(result: object) -> int:
+    return len(
+        json.dumps(
+            result,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
 
 
 async def test_unknown_capability_maps_to_rest_not_found() -> None:
@@ -127,3 +141,106 @@ async def test_final_response_byte_limit_is_enforced() -> None:
     assert result.error is not None
     assert result.error.code == "RESPONSE_TOO_LARGE"
     assert decode_kernel_response(result)[0] == 502
+    assert kernel_result_bytes(result.as_dict()) <= 512
+
+
+@pytest.mark.parametrize(
+    ("failure", "secret_marker"),
+    [
+        (
+            {
+                "success": False,
+                "error": {"code": "UPSTREAM_FAILURE", "message": "stderr:" + "x" * 4096},
+            },
+            "stderr:" + "x" * 4096,
+        ),
+        (
+            {
+                "success": False,
+                "error": {
+                    "code": "UPSTREAM_FAILURE",
+                    "message": "safe",
+                    "suggestion": "details:" + "x" * 4096,
+                },
+            },
+            "details:" + "x" * 4096,
+        ),
+    ],
+)
+async def test_upstream_failure_result_byte_limit_is_enforced(
+    failure: dict[str, Any], secret_marker: str
+) -> None:
+    async def failed() -> dict[str, Any]:
+        return failure
+
+    kernel = InvocationKernel(
+        registry=CapabilityRegistry({"read": manifest("read", max_response_bytes=512)}),
+        operations={"read": failed},
+        target_identity="x",
+    )
+    result = await kernel.invoke("read", {})
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == "RESPONSE_TOO_LARGE"
+    assert secret_marker not in json.dumps(result.as_dict(), ensure_ascii=False)
+    assert kernel_result_bytes(result.as_dict()) <= 512
+
+
+async def test_failure_utf8_is_counted_in_bytes_not_characters() -> None:
+    message = "ż" * 300  # 600 UTF-8 bytes, only 300 Python characters.
+
+    async def failed() -> dict[str, Any]:
+        return {
+            "success": False,
+            "error": {"code": "UPSTREAM_FAILURE", "message": message},
+        }
+
+    kernel = InvocationKernel(
+        registry=CapabilityRegistry({"read": manifest("read", max_response_bytes=512)}),
+        operations={"read": failed},
+        target_identity="x",
+    )
+    result = await kernel.invoke("read", {})
+    assert result.error is not None
+    assert result.error.code == "RESPONSE_TOO_LARGE"
+    assert kernel_result_bytes(result.as_dict()) <= 512
+
+
+async def test_validation_failure_result_byte_limit_is_enforced() -> None:
+    schema = InputSchema(
+        {"name": InputField((str,), required=True, max_length=32)},
+    )
+    kernel = InvocationKernel(
+        registry=CapabilityRegistry(
+            {"read": manifest("read", max_response_bytes=512, input_schema=schema)}
+        ),
+        operations={"read": lambda: {"success": True}},
+        target_identity="x",
+    )
+    result = await kernel.invoke("read", {"x" * 4096: "payload"})
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == "RESPONSE_TOO_LARGE"
+    assert "x" * 4096 not in result.error.message
+    assert kernel_result_bytes(result.as_dict()) <= 512
+
+
+async def test_inactive_reason_result_byte_limit_is_enforced() -> None:
+    reason = "x" * 4096
+    registry = CapabilityRegistry(
+        {
+            "inactive": manifest(
+                "inactive", max_response_bytes=512, active=False, inactive_reason=reason
+            )
+        }
+    )
+    kernel = InvocationKernel(
+        registry=registry,
+        operations={},
+        target_identity="x",
+    )
+    result = await kernel.invoke("inactive", {})
+    assert result.error is not None
+    assert result.error.code == "RESPONSE_TOO_LARGE"
+    assert reason not in result.error.message
+    assert kernel_result_bytes(result.as_dict()) <= 512

@@ -238,7 +238,7 @@ async def test_real_router_response_byte_limit_is_enforced(lab_settings: Setting
         timeout_ms=15_000,
         requires_confirmation=False,
         reversible=False,
-        max_response_bytes=128,
+        max_response_bytes=512,
     )
     kernel = InvocationKernel(
         registry=CapabilityRegistry({manifest.name: manifest}),
