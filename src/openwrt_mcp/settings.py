@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 
+from openwrt_mcp.provenance import BuildProvenance
+
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
@@ -44,6 +46,7 @@ class Settings:
     mock_mode: bool
     insecure_skip_host_key_check: bool = False
     health_enabled: bool = True
+    provenance: BuildProvenance = BuildProvenance()
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -104,6 +107,7 @@ class Settings:
             mcp_transport=transport,
             mock_mode=mock_mode,
             health_enabled=_bool_env("HEALTH_ENABLED", True),
+            provenance=BuildProvenance.installed(),
         )
 
 

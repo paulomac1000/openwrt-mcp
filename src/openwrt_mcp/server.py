@@ -162,6 +162,7 @@ def make_health_handler(
                     {
                         "status": "ready" if ready else "not_ready",
                         "version": __version__,
+                        "provenance": app.settings.provenance.as_dict(),
                         "uptime_seconds": int(time.monotonic() - state.started_at),
                         "dependency": dependency,
                         "active_tools": len(app.kernel.registry.active()),

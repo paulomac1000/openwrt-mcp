@@ -260,6 +260,7 @@ def build_invocation_kernel(
             "success": True,
             "server": "OpenWRT-Observer",
             "version": __version__,
+            "provenance": settings.provenance.as_dict(),
             "schema_version": "2",
             "profile": SERVER_PROFILE,
             "sdk_family": SDK_FAMILY,
