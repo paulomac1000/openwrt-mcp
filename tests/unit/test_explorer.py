@@ -195,6 +195,9 @@ async def test_network_tool_dtos_are_backward_compatible(
     assert scan["networks"][0]["ssid"] == "Neighbor"
     assert scan["networks"][0]["mode"] == "Master"
     assert scan["networks"][0]["channel"] == "6"
+    assert scan["scan_source"] == "iwinfo"
+    assert scan["cached"] is False
+    assert scan["freshness"] == "current-request"
 
 
 @pytest.mark.parametrize(

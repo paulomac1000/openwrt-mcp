@@ -107,6 +107,9 @@ async def test_mock_wifi_scan_contains_real_scan_fields(
 ) -> None:
     result = await mock_explorer.wifi_scan("wlan0")
     assert result["success"] is True
+    assert result["scan_source"] == "iwinfo"
+    assert result["cached"] is False
+    assert result["freshness"] == "current-request"
     network = result["networks"][0]
     for field in ("bssid", "ssid", "channel", "signal", "mode"):
         assert field in network, f"wifi_scan network missing {field!r}"

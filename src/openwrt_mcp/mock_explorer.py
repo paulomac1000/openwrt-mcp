@@ -339,6 +339,9 @@ class MockOpenWRTExplorer:
         return {
             "success": True,
             "radio": validated_radio,
+            "scan_source": "iwinfo",
+            "cached": False,
+            "freshness": "current-request",
             "networks_found": 1,
             "networks_returned": 1,
             "truncated": False,
