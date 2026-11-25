@@ -317,14 +317,12 @@ async def test_device_validation_network_failures_and_scan_parser(tmp_path: Path
 
     usage = explorer(
         tmp_path,
-        {
-            "iwinfo missing0 scan": ("Usage:\n\tiwinfo <device> scan\n", "", 0),
-            "iw dev missing0 scan dump": ("", "missing interface", 1),
-        },
+        {"iwinfo missing0 scan": ("Usage:\n\tiwinfo <device> scan\n", "", 0)},
     )
     scan = await usage.wifi_scan("missing0")
     assert scan["success"] is False
-    assert scan["error"] == "missing interface"
+    assert scan["error"] == "WiFi scan failed"
+    assert usage.ssh.commands == ["iwinfo missing0 scan"]
 
     with pytest.raises(ValidationError, match="Provide device"):
         await service.get_device_dhcp_details()
