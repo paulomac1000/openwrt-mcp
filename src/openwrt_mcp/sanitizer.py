@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from typing import Any
+from typing import Any, Final
 
+_SECRET_NAMES: Final = r"password|passwd|passphrase|psk|secret|token|key|api[_-]?key|pre[_-]?shared"
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----.*?(?:-----END \1-----|\Z)", re.S),
+        "<REDACTED>",
+    ),
+    (re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^\s/?#<>\"']*@", re.I), r"\1<REDACTED>@"),
     (re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", re.I), "Bearer <REDACTED>"),
     (re.compile(r"Authorization:\s*.+", re.I), "Authorization: <REDACTED>"),
     (
         re.compile(
             r"(?<![A-Za-z0-9])"
-            r"(?P<name>password|passwd|psk|secret|token|key|api[_-]?key|pre[_-]?shared)"
+            rf"(?P<name>{_SECRET_NAMES})"
             r"(?![A-Za-z0-9])"
             r"(?P<separator>\s*[=:]\s*)"
             r"(?P<value>'[^']*'|\"[^\"]*\"|\S+)",
@@ -31,7 +37,7 @@ _MAC_PATTERN = re.compile(
 )
 _SECRET_KEY_RE = re.compile(
     r"(?:^|[^A-Za-z0-9])"
-    r"(?:password|passwd|psk|secret|token|key|api[_-]?key|pre[_-]?shared)"
+    rf"(?:{_SECRET_NAMES})"
     r"(?:$|[^A-Za-z0-9])",
     re.I,
 )

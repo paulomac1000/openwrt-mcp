@@ -60,7 +60,7 @@ class FailingExplorer(MockOpenWRTExplorer):
             "success": False,
             "error": {
                 "code": "UPSTREAM_FAILURE",
-                "message": "password=router-secret",
+                "message": "wpa_passphrase=router-secret",
                 "retryable": False,
             },
         }
