@@ -70,6 +70,12 @@ The all-tool test is intentionally strict. If `traceroute`, `iwinfo scan`, local
 
 Store the JUnit XML together with the router model, OpenWRT version, kernel version, Python version, `asyncssh` version, `mcp` version, tested git SHA, and UTC timestamp. Do not commit private keys, `known_hosts`, router addresses, MAC addresses, DHCP data, or raw router logs as evidence.
 
+## If an isolated router is unavailable
+
+Use a disposable OpenWrt x86 VM on a private virtual network with no bridge or route to the production LAN and no inbound forwarding. Provision dedicated SSH credentials and verify the VM host key through its console. Provide a private DNS fixture and a routed lab destination that does not reply to ping for the timeout and cancellation cases. Record the VM firmware identity alongside the exact candidate SHA.
+
+A VM without a working wireless radio can give diagnostic evidence for the SSH, protocol, and size-limit cases, but it cannot pass the all-tool gate. To claim the full **6 passed, 0 failed, 0 skipped**, use a lab target with a usable `iwinfo` radio and a successful scan. Do not substitute mock output or a production scan for that case.
+
 ## Deliberately deferred write profile
 
 `tests/integration/test_real_router_todos.py` contains one owned `NOT_IMPLEMENTED` placeholder for a future authenticated write profile. It is **not** a missing requirement for the current L1 read-only profile. Do not implement or enable write tools until principal-bound authorization, expiring approvals, audit semantics, plan/execute/verify behavior, and compensation policy have been reviewed.

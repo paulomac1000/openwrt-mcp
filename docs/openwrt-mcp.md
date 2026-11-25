@@ -71,6 +71,15 @@ CI tests the exact wheel, builds the container once from that wheel plus the rev
 
 The CI workflow runs on pull requests and on `main` pushes. Feature-branch `push` is not a second authoritative trigger, avoiding duplicate expensive wheel/container pipelines for the same PR revision.
 
+## Migrate a local 1.4.0 deployment to 2.0.0
+
+OpenCode and other local stdio clients can keep their process-based launch model. Clients that use REST/SSE or send a tool-level timeout must change their configuration before switching. Do not publish ports for MCP; the optional health listener is loopback-only and is not a tool transport.
+
+1. Record the current image ID and retain the previous client configuration and image privately. A version string or revision label alone is not proof that the previous image was built from that revision.
+2. After release acceptance, verify the published image digest against the release's provenance and smoke-test evidence. Configure the client to use that digest, not `latest`. Keep the intended router and SSH identity explicit. Verify the host key against a trusted record before mounting the key and known-hosts files read-only. Do not enable the insecure host-key override.
+3. In OpenCode, keep the MCP entry `type: "local"` with a Docker command using `--init -i --rm`; do not allocate a TTY. Disable the optional health listener for clients that do not use it. Check that the client lists 19 read capabilities, that `describe_router_capabilities` reports the intended profile and version, and that a permitted read succeeds against the intended target before moving other consumers.
+4. If discovery, SSH verification, or the read smoke fails, stop the cutover. Restore the previous client configuration and exact previous image, reconnect the client, and confirm the same read operation. Do not bypass host-key checks or fall back to a different router.
+
 ## Verification
 
 Local deterministic verification:
