@@ -687,6 +687,8 @@ class OpenWRTExplorer:
         stdout, stderr, code = await self._run(f"iwinfo {radio} scan")
         if code != 0:
             return {"success": False, "error": stderr or "WiFi scan failed"}
+        if stdout.lstrip().startswith("Usage:"):
+            return {"success": False, "error": "WiFi interface unavailable"}
         networks = self._parse_wifi_scan(stdout)
         return {
             "success": True,

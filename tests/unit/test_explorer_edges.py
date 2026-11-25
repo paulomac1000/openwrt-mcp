@@ -315,6 +315,14 @@ async def test_device_validation_network_failures_and_scan_parser(tmp_path: Path
     assert lookup["error"] == "not found"
     assert (await service.wifi_scan("wlan0"))["success"] is False
 
+    usage = explorer(
+        tmp_path,
+        {"iwinfo missing0 scan": ("Usage:\n\tiwinfo <device> scan\n", "", 0)},
+    )
+    scan = await usage.wifi_scan("missing0")
+    assert scan["success"] is False
+    assert scan["error"] == "WiFi interface unavailable"
+
     with pytest.raises(ValidationError, match="Provide device"):
         await service.get_device_dhcp_details()
     with pytest.raises(ValidationError, match="Invalid MAC"):
