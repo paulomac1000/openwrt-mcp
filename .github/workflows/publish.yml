@@ -205,8 +205,17 @@ jobs:
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: openwrt-mcp-os-scan-${{ github.run_id }}
-          path: release-payload/os-scan
+          path: os-scan-download
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize verified OS scan location
+        run: |
+          set -euo pipefail
+          mkdir -p release-payload/os-scan
+          test -f os-scan-download/trivy-image.json
+          test -f os-scan-download/trivy-summary.json
+          test -f os-scan-download/trivy-version.txt
+          cp -a os-scan-download/. release-payload/os-scan/
 
       - name: Re-verify and load exact smoke-tested image
         shell: bash
