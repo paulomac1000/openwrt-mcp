@@ -163,11 +163,13 @@ jobs:
           print(json.dumps(summary, indent=2, sort_keys=True))
           if critical:
               raise SystemExit(f"release blocked: {critical} CRITICAL OS vulnerabilities")
+          Path("os-scan/critical-count").write_text(str(critical), encoding="utf-8")
           PY
+          critical_count="$(cat os-scan/critical-count)"
           echo "os_report_sha256=$(sha256sum os-scan/trivy-image.json | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "os_summary_sha256=$(sha256sum os-scan/trivy-summary.json | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "os_version_sha256=$(sha256sum os-scan/trivy-version.txt | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "os_critical_count=$critical" >> "$GITHUB_OUTPUT"
+          echo "os_critical_count=$critical_count" >> "$GITHUB_OUTPUT"
 
       - name: Retain exact image vulnerability scan
         if: always()
