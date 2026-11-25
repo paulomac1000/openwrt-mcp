@@ -67,6 +67,8 @@ class MockOpenWRTExplorer:
                     "mode": "ap",
                     "ifname": "wlan0",
                     "clients_count": 1,
+                    "clients_returned": 1,
+                    "truncated": False,
                     "clients": [
                         {
                             "mac": "02:00:00:00:00:01",
@@ -83,6 +85,8 @@ class MockOpenWRTExplorer:
         return {
             "success": True,
             "leases_count": 1,
+            "leases_returned": 1,
+            "truncated": False,
             "leases": [
                 {
                     "expires_at": "1893456000",
@@ -99,6 +103,7 @@ class MockOpenWRTExplorer:
             "firewall_type": "nftables",
             "rules_preview": "table inet fw4 { # mock }",
             "full_output_truncated": False,
+            "truncated": False,
         }
 
     async def read_uci_config(self, config_name: str) -> dict[str, Any]:
@@ -108,6 +113,8 @@ class MockOpenWRTExplorer:
             "success": True,
             "config_name": config,
             "entries_count": len(sample),
+            "entries_returned": len(sample),
+            "truncated": False,
             "sample": sample,
         }
 
@@ -115,6 +122,9 @@ class MockOpenWRTExplorer:
         return {
             "success": True,
             "packages_count": 3,
+            "package_manager": "opkg",
+            "packages_returned": 3,
+            "truncated": False,
             "packages_sample": [
                 {"name": "base-files", "version": "237-r23838-5eb723af07"},
                 {"name": "busybox", "version": "1.36.1-2"},
@@ -133,10 +143,12 @@ class MockOpenWRTExplorer:
             needle = filter_level.casefold()
             entries = [entry for entry in entries if needle in entry.casefold()]
         selected = entries[:bounded]
+        preview = "\n".join(selected)
         return {
             "success": True,
             "lines_count": len(selected),
-            "logs": "\n".join(selected)[:3_000],
+            "logs": preview[:3_000],
+            "truncated": len(entries) > bounded or len(preview) > 3_000,
         }
 
     async def search_router_logs(
@@ -150,11 +162,13 @@ class MockOpenWRTExplorer:
             entry for entry in self._log_entries() if search_term.casefold() in entry.casefold()
         ]
         bounded = min(max(int(max_results), 1), 100)
+        preview = "\n".join(matches[-bounded:])
         return {
             "success": True,
             "search_term": search_term,
             "results_count": len(matches),
-            "results": "\n".join(matches[-bounded:])[:3_000],
+            "results": preview[:3_000],
+            "truncated": len(matches) > bounded or len(preview) > 3_000,
         }
 
     async def diagnose_router_connectivity(self) -> dict[str, Any]:
@@ -191,6 +205,8 @@ class MockOpenWRTExplorer:
             "success": True,
             "search_term": search_term,
             "events_found": len(events),
+            "events_returned": min(len(events), 50),
+            "truncated": len(events) > 50,
             "events": events[:50],
         }
 
@@ -324,6 +340,8 @@ class MockOpenWRTExplorer:
             "success": True,
             "radio": validated_radio,
             "networks_found": 1,
+            "networks_returned": 1,
+            "truncated": False,
             "networks": [
                 {
                     "bssid": "02:00:00:00:00:01",

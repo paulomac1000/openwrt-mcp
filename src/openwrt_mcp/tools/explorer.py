@@ -7,6 +7,7 @@ import json
 import re
 from typing import Any
 
+from openwrt_mcp.sanitizer import sanitize_response_data
 from openwrt_mcp.settings import Settings, get_settings
 from openwrt_mcp.tools.ssh_client import SSHConnection
 from openwrt_mcp.validators import SecurityValidator, ValidationError
@@ -202,6 +203,8 @@ class OpenWRTExplorer:
                             interface.get("section", "unknown"),
                         ),
                         "clients_count": len(clients),
+                        "clients_returned": min(len(clients), 10),
+                        "truncated": len(clients) > 10,
                         "clients": clients[:10],
                     }
                 )
@@ -209,11 +212,7 @@ class OpenWRTExplorer:
             "success": True,
             "interfaces_count": len(interfaces),
             "interfaces": interfaces,
-            "note": (
-                "Router may be in repeater mode (no AP interfaces)"
-                if not any(item.get("type") == "ap" for item in interfaces)
-                else None
-            ),
+            "note": None,
         }
 
     async def list_dhcp_leases(self) -> dict[str, Any]:
@@ -236,6 +235,8 @@ class OpenWRTExplorer:
         return {
             "success": True,
             "leases_count": len(leases),
+            "leases_returned": min(len(leases), 50),
+            "truncated": len(leases) > 50,
             "leases": leases[:50],
         }
 
@@ -252,11 +253,13 @@ class OpenWRTExplorer:
                     for line in raw.splitlines()
                     if line.strip() and not line.lstrip().startswith("#")
                 )
+                safe_preview = sanitize_response_data(preview)
                 return {
                     "success": True,
                     "firewall_type": kind,
-                    "rules_preview": preview[:2_500],
-                    "full_output_truncated": len(preview) > 2_500,
+                    "rules_preview": safe_preview[:2_500],
+                    "full_output_truncated": len(safe_preview) > 2_500,
+                    "truncated": len(safe_preview) > 2_500,
                 }
         return {"success": False, "error": "No supported firewall output available"}
 
@@ -280,26 +283,52 @@ class OpenWRTExplorer:
             "success": True,
             "config_name": config,
             "entries_count": len(entries),
+            "entries_returned": min(len(entries), 20),
+            "truncated": len(entries) > 20,
             "sample": dict(list(entries.items())[:20]),
         }
 
     async def list_installed_packages(self) -> dict[str, Any]:
-        raw, error, code = await self._run("opkg list-installed")
-        if code != 0:
-            return {"success": False, "error": error or "Failed to list packages"}
+        raw, _, code = await self._run("opkg list-installed")
         packages: list[dict[str, str]] = []
-        for line in raw.splitlines():
-            name, separator, version = line.partition(" - ")
-            if name.strip():
-                packages.append(
-                    {
-                        "name": name.strip(),
-                        "version": version.strip() if separator else "unknown",
-                    }
-                )
+        manager = "opkg"
+        if code == 0:
+            for line in raw.splitlines():
+                name, separator, version = line.partition(" - ")
+                if name.strip():
+                    packages.append(
+                        {
+                            "name": name.strip(),
+                            "version": version.strip() if separator else "unknown",
+                        }
+                    )
+        elif code == 127:
+            manager = "apk"
+            raw, _, code = await self._run(
+                "apk --installed query --fields name,version --format json '*'"
+            )
+            if code != 0:
+                return {"success": False, "error": "Installed package inventory unavailable"}
+            try:
+                rows = json.loads(raw)
+            except ValueError:
+                rows = None
+            if not isinstance(rows, list):
+                return {"success": False, "error": "Invalid APK inventory"}
+            for row in rows:
+                match row:
+                    case {"name": str(name), "version": str(version)} if name and version:
+                        packages.append({"name": name, "version": version})
+                    case _:
+                        return {"success": False, "error": "Invalid APK inventory"}
+        else:
+            return {"success": False, "error": "Failed to list installed packages"}
         return {
             "success": True,
+            "package_manager": manager,
             "packages_count": len(packages),
+            "packages_returned": min(len(packages), 20),
+            "truncated": len(packages) > 20,
             "packages_sample": packages[:20],
         }
 
@@ -317,10 +346,12 @@ class OpenWRTExplorer:
             needle = filter_level.casefold()
             values = [line for line in values if needle in line.casefold()]
         selected = values[:bounded]
+        preview = sanitize_response_data("\n".join(selected))
         return {
             "success": True,
             "lines_count": len(selected),
-            "logs": "\n".join(selected)[:3_000],
+            "logs": preview[:3_000],
+            "truncated": len(values) > bounded or len(preview) > 3_000,
         }
 
     async def search_router_logs(
@@ -335,11 +366,13 @@ class OpenWRTExplorer:
             return {"success": False, "error": error or "Failed to read logs"}
         matches = [line for line in raw.splitlines() if search_term.casefold() in line.casefold()]
         bounded = min(max(int(max_results), 1), 100)
+        preview = sanitize_response_data("\n".join(matches[-bounded:]))
         return {
             "success": True,
             "search_term": search_term,
             "results_count": len(matches),
-            "results": "\n".join(matches[-bounded:])[:3_000],
+            "results": preview[:3_000],
+            "truncated": len(matches) > bounded or len(preview) > 3_000,
         }
 
     async def diagnose_router_connectivity(self) -> dict[str, Any]:
@@ -439,14 +472,17 @@ class OpenWRTExplorer:
         if code != 0:
             return {"success": False, "error": error or "Failed to read logs"}
         events = []
+        any_line_clipped = False
         term = search_term.casefold()
         for line in raw.splitlines():
             folded = line.casefold()
             if term not in folded or ("dhcp" not in folded and "dnsmasq" not in folded):
                 continue
+            safe_line = sanitize_response_data(line)
+            any_line_clipped |= len(safe_line) > 200
             events.append(
                 {
-                    "raw_log": line[:200],
+                    "raw_log": safe_line[:200],
                     "event_type": self._dhcp_event_type(line),
                     "contains_search_term": True,
                 }
@@ -455,6 +491,8 @@ class OpenWRTExplorer:
             "success": True,
             "search_term": search_term,
             "events_found": len(events),
+            "events_returned": min(len(events), 50),
+            "truncated": len(events) > 50 or any_line_clipped,
             "events": events[:50],
         }
 
@@ -509,9 +547,10 @@ class OpenWRTExplorer:
             if static_ok
             else None
         )
+        lease_known = lease_ok and (current is not None or not leases.get("truncated", False))
         return {
             "success": True,
-            "partial": not (lease_ok and static_ok and logs_ok),
+            "partial": not (lease_known and static_ok and logs_ok),
             "subsections": {
                 "leases": self._subsection_status(leases),
                 "static_reservations": self._subsection_status(static),
@@ -521,7 +560,7 @@ class OpenWRTExplorer:
             "current_lease": current,
             "static_reservation": reservation,
             "has_static_reservation": reservation is not None if static_ok else None,
-            "is_currently_connected": current is not None if lease_ok else None,
+            "is_currently_connected": current is not None if lease_known else None,
             "recent_log_events": logs.get("events", [])[:5] if logs_ok else [],
             "note": "DHCP logs require 'log_dhcp' enabled in dnsmasq configuration.",
         }
@@ -653,6 +692,8 @@ class OpenWRTExplorer:
             "success": True,
             "radio": radio,
             "networks_found": len(networks),
+            "networks_returned": min(len(networks), 20),
+            "truncated": len(networks) > 20,
             "networks": networks[:20],
         }
 

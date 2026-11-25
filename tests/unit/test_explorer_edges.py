@@ -51,6 +51,63 @@ def explorer(tmp_path: Path, responses: dict[str, tuple[str, str, int]]) -> Open
     return OpenWRTExplorer(settings(tmp_path), ssh=SSH(responses))
 
 
+async def test_apk_inventory_uses_unambiguous_name_and_version(tmp_path: Path) -> None:
+    router = explorer(
+        tmp_path,
+        {
+            "opkg list-installed": ("", "", 127),
+            "apk --installed query --fields name,version --format json '*'": (
+                '[{"name":"package-2-tools","version":"6.12.66-1"}]',
+                "",
+                0,
+            ),
+        },
+    )
+    result = await router.list_installed_packages()
+    assert result["package_manager"] == "apk"
+    assert result["packages_sample"] == [{"name": "package-2-tools", "version": "6.12.66-1"}]
+
+
+async def test_empty_wifi_does_not_imply_repeater_mode(tmp_path: Path) -> None:
+    router = explorer(tmp_path, {"ubus call network.wireless status": ("{}", "", 0)})
+    result = await router.get_wifi_status()
+    assert result["interfaces"] == []
+    assert result.get("note") is None
+
+
+@pytest.mark.parametrize("count", [49, 50, 51])
+async def test_lease_cap_reports_returned_items(tmp_path: Path, count: int) -> None:
+    raw = "1893456000 02:00:00:00:01 192.0.2.2 client *\n" * count
+    router = explorer(tmp_path, {"cat /tmp/dhcp.leases": (raw, "", 0)})
+    result = await router.list_dhcp_leases()
+    assert result["leases_count"] == count
+    assert result["truncated"] is (count > 50)
+    assert result["leases_returned"] == len(result["leases"]) == min(count, 50)
+
+
+async def test_clipped_log_preview_reports_truncation(tmp_path: Path) -> None:
+    raw = "a" * 3_001
+    router = explorer(tmp_path, {"logread -l 50": (raw, "", 0)})
+    result = await router.get_router_logs()
+    assert len(result["logs"]) == 3_000
+    assert result["truncated"] is True
+
+
+async def test_dhcp_details_do_not_infer_absence_from_truncated_leases(tmp_path: Path) -> None:
+    raw = "1893456000 02:00:00:00:01 192.0.2.2 client *\n" * 51
+    router = explorer(
+        tmp_path,
+        {
+            "cat /tmp/dhcp.leases": (raw, "", 0),
+            "uci show dhcp": ("", "", 0),
+            "logread -l 500": ("", "", 0),
+        },
+    )
+    result = await router.get_device_dhcp_details(ip_address="192.0.2.3")
+    assert result["partial"] is True
+    assert result["is_currently_connected"] is None
+
+
 @pytest.mark.asyncio
 async def test_connection_and_system_error_paths(tmp_path: Path) -> None:
     disconnected = explorer(tmp_path, {"ubus call system board": ("", "denied", 1)})
@@ -121,7 +178,8 @@ async def test_wifi_dhcp_firewall_fallbacks(tmp_path: Path) -> None:
     result = await station.get_wifi_status()
     assert result["interfaces"][0]["ifname"] == "wlan-sta"
     assert result["interfaces"][0]["clients"][0]["idle"] == 4
-    assert result["note"] is not None
+    assert result["interfaces"][0]["mode"] == "sta"
+    assert result["note"] is None
 
     no_firewall = explorer(
         tmp_path,
