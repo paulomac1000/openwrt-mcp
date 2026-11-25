@@ -331,6 +331,21 @@ async def test_audit_log_redacts_secret_and_ip_and_is_private(
     assert stat_result.st_mode & 0o777 == 0o600
 
 
+async def test_audit_omits_even_unclassified_uci_values(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = FakeConnection()
+    connection.delay = 0
+    install_asyncssh(monkeypatch, connection)
+    _, _, code = await SSHConnection(settings).execute_write(
+        "uci set wireless.radio0.custom=synthetic-write-canary-9d6"
+    )
+    assert code == 0
+    audit = await asyncio.to_thread(settings.audit_log_file.read_text, encoding="utf-8")
+    assert "synthetic-write-canary-9d6" not in audit
+    assert "uci" in audit
+
+
 async def test_audit_log_refuses_symlink_target(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,

@@ -8,6 +8,16 @@ from openwrt_mcp.tools.writer import OpenWRTWriter
 from openwrt_mcp.validators import ValidationError
 
 
+@pytest.mark.parametrize("code", [0, 1])
+async def test_uci_set_does_not_echo_value_or_upstream_error(code: int) -> None:
+    canary = "synthetic-writer-canary-e22"
+    ssh = AsyncMock()
+    ssh.execute_write.return_value = ("", f"failed at {canary}", code)
+    result = await OpenWRTWriter(ssh).uci_set("network", "wan", "proto", canary)
+    assert result["success"] is (code == 0)
+    assert canary not in repr(result)
+
+
 async def test_writer_rejects_injection_before_ssh() -> None:
     ssh = AsyncMock()
     writer = OpenWRTWriter(ssh)

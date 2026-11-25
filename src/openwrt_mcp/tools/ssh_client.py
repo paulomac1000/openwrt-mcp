@@ -298,7 +298,7 @@ class SSHConnection:
             f"{datetime.now(UTC).isoformat()} | {get_request_id()} | "
             f"caller={caller.principal} | "
             f"target={self.settings.openwrt_user}@{self.settings.openwrt_host} | "
-            f"{command}\n"
+            f"program={command.partition(' ')[0]} arguments=<REDACTED>\n"
         )
         try:
             path = self.settings.audit_log_file

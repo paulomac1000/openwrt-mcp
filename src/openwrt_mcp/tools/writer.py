@@ -49,9 +49,9 @@ class OpenWRTWriter:
         timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
         command = SecurityValidator.build_uci_set_command(config, section, option, value)
-        _, error, code = await self.ssh.execute_write(command, timeout_seconds=timeout_seconds)
+        _, _, code = await self.ssh.execute_write(command, timeout_seconds=timeout_seconds)
         if code != 0:
-            return {"success": False, "error": error}
+            return {"success": False, "error": "UCI set failed", "exit_code": code}
         return {
             "success": True,
             "config": config,
