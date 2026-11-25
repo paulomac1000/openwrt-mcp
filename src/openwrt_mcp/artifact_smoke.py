@@ -13,6 +13,8 @@ from typing import Any, TextIO
 from mcp import Client, ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from openwrt_mcp import __version__
+
 _MODERN_PROTOCOL = "2026-07-28"
 _LEGACY_PROTOCOL = "2025-11-25"
 _ALLOWED_CHILD_ENV = (
@@ -79,6 +81,18 @@ def _assert_clean_stderr(errlog: TextIO, *, mode: str) -> None:
         raise RuntimeError(f"{mode} stdio child emitted a traceback: {rendered[-2000:]}")
 
 
+def _assert_provenance(result: Any) -> None:
+    expected = {
+        "revision": os.getenv("OPENWRT_SMOKE_REVISION", "unknown"),
+        "wheel_sha256": os.getenv("OPENWRT_SMOKE_WHEEL_SHA256", "unknown"),
+        "version": __version__,
+    }
+    structured = result.structured_content or {}
+    data = structured.get("data")
+    if result.is_error or not isinstance(data, Mapping) or data.get("provenance") != expected:
+        raise RuntimeError("stdio capability provenance does not match expected artifact")
+
+
 async def _smoke_modern_stdio() -> None:
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
         transport = stdio_client(
@@ -96,6 +110,7 @@ async def _smoke_modern_stdio() -> None:
             invalid = await client.call_tool("ping_host", {"host": "bad;reboot"})
             _assert_catalog_and_result(listing, result)
             _assert_invalid_host_error(invalid)
+            _assert_provenance(await client.call_tool("describe_router_capabilities", {}))
         _assert_clean_stderr(errlog, mode="modern")
 
 
@@ -117,6 +132,7 @@ async def _smoke_legacy_stdio() -> None:
                 invalid = await session.call_tool("ping_host", {"host": "bad;reboot"})
                 _assert_catalog_and_result(listing, result)
                 _assert_invalid_host_error(invalid)
+                _assert_provenance(await session.call_tool("describe_router_capabilities", {}))
         _assert_clean_stderr(errlog, mode="legacy")
 
 

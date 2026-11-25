@@ -152,7 +152,10 @@ jobs:
       - name: Smoke exact container image through real stdio
         run: |
           set -euo pipefail
-          docker run --rm "openwrt-mcp:ci-$CANDIDATE_SHA" \
+          docker run --rm --network none \
+            -e OPENWRT_SMOKE_REVISION="$CANDIDATE_SHA" \
+            -e OPENWRT_SMOKE_WHEEL_SHA256="$(cut -d ' ' -f1 wheel.sha256)" \
+            "openwrt-mcp:ci-$CANDIDATE_SHA" \
             python -m openwrt_mcp.artifact_smoke
 
       - name: Export exact smoke-tested image and evidence

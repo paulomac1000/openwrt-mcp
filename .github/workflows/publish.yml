@@ -22,6 +22,10 @@ jobs:
     permissions:
       actions: read
       contents: read
+    outputs:
+      evidence_sha256: ${{ steps.verify.outputs.evidence_sha256 }}
+      image_sha256: ${{ steps.verify.outputs.image_sha256 }}
+      image_id: ${{ steps.verify.outputs.image_id }}
     steps:
       - name: Download minimal exact release payload
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
@@ -32,6 +36,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify closed CI payload without executing it
+        id: verify
         shell: bash
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -73,6 +78,9 @@ jobs:
               or "sha256:" + labels["io.openwrt-mcp.wheel.sha256"] != evidence["artifacts"]["wheel"]["digest"]):
               raise SystemExit("release image provenance mismatch")
           '
+          echo "evidence_sha256=$(sha256sum ci-evidence.json | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "image_sha256=$(sha256sum image.tar.gz | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "image_id=$(docker image inspect --format '{{.Id}}' "$image")" >> "$GITHUB_OUTPUT"
 
   publish:
     if: github.event.workflow_run.conclusion == 'success'
@@ -101,9 +109,14 @@ jobs:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
           EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
           EXPECTED_REPOSITORY: ${{ github.repository }}
+          VERIFIED_IMAGE_SHA256: ${{ needs.verify-ci-payload.outputs.image_sha256 }}
+          VERIFIED_EVIDENCE_SHA256: ${{ needs.verify-ci-payload.outputs.evidence_sha256 }}
+          VERIFIED_IMAGE_ID: ${{ needs.verify-ci-payload.outputs.image_id }}
         run: |
           set -euo pipefail
           cd release-payload
+          printf '%s  ci-evidence.json\n' "$VERIFIED_EVIDENCE_SHA256" | sha256sum --check -
+          printf '%s  image.tar.gz\n' "$VERIFIED_IMAGE_SHA256" | sha256sum --check -
           sha256sum --check ci-evidence.sha256
           sha256sum --check image.sha256
           python - <<'PY'
@@ -126,6 +139,7 @@ jobs:
           PY
           docker load --input image.tar.gz
           image="openwrt-mcp:ci-$EXPECTED_SHA"
+          test "$(docker image inspect --format '{{.Id}}' "$image")" = "$VERIFIED_IMAGE_ID"
           test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$EXPECTED_SHA"
 
       - name: Log in to GHCR
@@ -137,11 +151,12 @@ jobs:
 
       - name: Promote exact CI image
         shell: bash
+        env:
+          VERIFIED_IMAGE_ID: ${{ needs.verify-ci-payload.outputs.image_id }}
         run: |
           set -euo pipefail
-          source="openwrt-mcp:ci-${{ github.event.workflow_run.head_sha }}"
           target="ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}"
-          docker tag "$source" "$target"
+          docker tag "$VERIFIED_IMAGE_ID" "$target"
           docker push "$target"
 
       - name: Resolve pushed digest
