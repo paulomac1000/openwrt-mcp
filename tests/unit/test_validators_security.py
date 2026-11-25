@@ -106,6 +106,8 @@ def test_write_validator_rejects_option_and_path_confusion() -> None:
 def test_read_validator_remains_allowlist_only() -> None:
     assert SecurityValidator.validate_command("ubus call system board")[0] is True
     assert SecurityValidator.validate_command("cat /etc/shadow")[0] is False
+    assert SecurityValidator.validate_command("iw dev wlan0 scan dump")[0] is True
+    assert SecurityValidator.validate_command("iw dev wlan0 scan abort")[0] is False
 
 
 @pytest.mark.parametrize(

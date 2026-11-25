@@ -687,14 +687,19 @@ class OpenWRTExplorer:
         stdout, stderr, code = await self._run(f"iwinfo {radio} scan")
         if code == 0 and not stdout.lstrip().startswith("Usage:"):
             networks = self._parse_wifi_scan(stdout)
-        else:
-            stdout, stderr, code = await self._run(f"iw dev {radio} scan")
-            if code != 0 and (code == 240 or "resource busy" in stderr.casefold()):
-                await self._run(f"iw dev {radio} scan abort")
-                stdout, stderr, code = await self._run(f"iw dev {radio} scan")
+        elif (
+            code == 1
+            and (stderr or stdout)
+            and not self._is_ssh_transport_error(stderr or stdout)
+        ):
+            stdout, stderr, code = await self._run(f"iw dev {radio} scan dump")
             if code != 0:
                 return {"success": False, "error": stderr or "WiFi scan failed"}
             networks = self._parse_iw_scan(stdout)
+            if not networks:
+                return {"success": False, "error": "WiFi scan produced no cached results"}
+        else:
+            return {"success": False, "error": stderr or "WiFi scan failed"}
         return {
             "success": True,
             "radio": radio,
@@ -703,6 +708,42 @@ class OpenWRTExplorer:
             "truncated": len(networks) > 20,
             "networks": networks[:20],
         }
+
+    @staticmethod
+    def _is_ssh_transport_error(message: str) -> bool:
+        folded = message.casefold()
+        return any(
+            marker in folded
+            for marker in (
+                "no ssh connection",
+                "ssh connection lost",
+                "timeout after",
+                "operation cancelled",
+                "remote output exceeded",
+                "ssh command execution failed",
+                "security denial",
+            )
+        )
+
+    @staticmethod
+    def _iw_frequency_to_channel(frequency: str) -> str | None:
+        try:
+            mhz = int(float(frequency))
+        except ValueError:
+            return None
+        if 2412 <= mhz <= 2472 and (mhz - 2412) % 5 == 0:
+            return str((mhz - 2412) // 5 + 1)
+        if 5180 <= mhz <= 5240 and (mhz - 5180) % 5 == 0:
+            return str((mhz - 5180) // 5 + 36)
+        if 5260 <= mhz <= 5320 and (mhz - 5260) % 5 == 0:
+            return str((mhz - 5260) // 5 + 52)
+        if 5500 <= mhz <= 5720 and (mhz - 5500) % 5 == 0:
+            return str((mhz - 5500) // 5 + 100)
+        if 5745 <= mhz <= 5825 and (mhz - 5745) % 5 == 0:
+            return str((mhz - 5745) // 5 + 149)
+        if 5955 <= mhz <= 7115 and (mhz - 5955) % 5 == 0:
+            return str((mhz - 5955) // 5 + 1)
+        return None
 
     @staticmethod
     def _parse_iw_scan(raw: str) -> list[dict[str, Any]]:
@@ -723,7 +764,10 @@ class OpenWRTExplorer:
             elif stripped.startswith("signal:"):
                 current["signal"] = stripped.split("signal:", 1)[1].strip()
             elif stripped.startswith("freq:"):
-                current["channel"] = stripped.split("freq:", 1)[1].strip().split()[0]
+                frequency = stripped.split("freq:", 1)[1].strip().split()[0]
+                channel = OpenWRTExplorer._iw_frequency_to_channel(frequency)
+                if channel is not None:
+                    current["channel"] = channel
             elif stripped.startswith("capability:") and "ESS" in stripped:
                 current["mode"] = "Master"
             elif stripped.startswith("capability:") and "IBSS" in stripped:

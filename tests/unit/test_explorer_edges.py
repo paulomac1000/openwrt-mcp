@@ -319,7 +319,7 @@ async def test_device_validation_network_failures_and_scan_parser(tmp_path: Path
         tmp_path,
         {
             "iwinfo missing0 scan": ("Usage:\n\tiwinfo <device> scan\n", "", 0),
-            "iw dev missing0 scan": ("", "missing interface", 1),
+            "iw dev missing0 scan dump": ("", "missing interface", 1),
         },
     )
     scan = await usage.wifi_scan("missing0")
@@ -343,12 +343,16 @@ async def test_device_validation_network_failures_and_scan_parser(tmp_path: Path
     assert parsed[1]["mode"] == "Client"
 
 
-async def test_wifi_scan_falls_back_to_iw_when_iwinfo_cannot_scan(tmp_path: Path) -> None:
+async def test_wifi_scan_reads_cached_iw_results_after_iwinfo_failure(tmp_path: Path) -> None:
     router = explorer(
         tmp_path,
         {
-            "iwinfo wlan0 scan": ("", "scan failed", 1),
-            "iw dev wlan0 scan": (
+            "iwinfo wlan0 scan": (
+                "Netlink error while awaiting scan results: No event received",
+                "",
+                1,
+            ),
+            "iw dev wlan0 scan dump": (
                 "BSS 02:00:00:00:00:01(on wlan0)\n"
                 "\tfreq: 2437.0\n"
                 "\tsignal: -30.00 dBm\n"
@@ -365,33 +369,38 @@ async def test_wifi_scan_falls_back_to_iw_when_iwinfo_cannot_scan(tmp_path: Path
     assert result["networks"][0]["bssid"] == "02:00:00:00:00:01"
     assert result["networks"][0]["ssid"] == "OpenWrt"
     assert result["networks"][0]["mode"] == "Master"
+    assert result["networks"][0]["channel"] == "6"
+    assert router.ssh.commands == ["iwinfo wlan0 scan", "iw dev wlan0 scan dump"]
 
 
-async def test_wifi_scan_recovers_from_busy_driver_after_iwinfo_failure(
-    tmp_path: Path,
-) -> None:
-    class BusyOnceSSH(SSH):
-        async def execute(self, command: str) -> tuple[str, str, int]:
-            self.commands.append(command)
-            if command == "iwinfo wlan0 scan":
-                return "", "scan failed", 1
-            if command == "iw dev wlan0 scan" and self.commands.count(command) == 1:
-                return "", "command failed: Resource busy (-16)", 240
-            if command == "iw dev wlan0 scan abort":
-                return "", "", 0
-            if command == "iw dev wlan0 scan":
-                return "BSS 02:00:00:00:00:01(on wlan0)\nSSID: OpenWrt\n", "", 0
-            return "", "missing fake response", 1
-
-    router = OpenWRTExplorer(settings(tmp_path), ssh=BusyOnceSSH({}))
+async def test_wifi_scan_does_not_reissue_after_ssh_connection_loss(tmp_path: Path) -> None:
+    router = explorer(
+        tmp_path,
+        {
+            "iwinfo wlan0 scan": (
+                "",
+                "SSH connection lost during read; command was not replayed",
+                125,
+            )
+        },
+    )
     result = await router.wifi_scan("wlan0")
-    assert result["success"] is True
-    assert result["networks_found"] == 1
-    assert router.ssh.commands[-3:] == [
-        "iw dev wlan0 scan",
-        "iw dev wlan0 scan abort",
-        "iw dev wlan0 scan",
-    ]
+    assert result["success"] is False
+    assert result["error"] == "SSH connection lost during read; command was not replayed"
+    assert router.ssh.commands == ["iwinfo wlan0 scan"]
+
+
+async def test_wifi_scan_never_aborts_another_scan(tmp_path: Path) -> None:
+    router = explorer(
+        tmp_path,
+        {
+            "iwinfo wlan0 scan": ("", "scan failed", 1),
+            "iw dev wlan0 scan dump": ("", "command failed: Resource busy (-16)", 240),
+        },
+    )
+    result = await router.wifi_scan("wlan0")
+    assert result["success"] is False
+    assert router.ssh.commands == ["iwinfo wlan0 scan", "iw dev wlan0 scan dump"]
 
 
 @pytest.mark.parametrize(
