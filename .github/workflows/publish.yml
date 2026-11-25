@@ -265,9 +265,9 @@ jobs:
           image="openwrt-mcp:ci-$EXPECTED_SHA"
           test "$(docker image inspect --format '{{.Id}}' "$image")" = "$VERIFIED_IMAGE_ID"
           test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$EXPECTED_SHA"
-          printf '%s  trivy-image.json\n' "$OS_REPORT_SHA256" | sha256sum --check -
-          printf '%s  trivy-summary.json\n' "$OS_SUMMARY_SHA256" | sha256sum --check -
-          printf '%s  trivy-version.txt\n' "$OS_VERSION_SHA256" | sha256sum --check -
+          printf '%s  %s\n' "$OS_REPORT_SHA256" "$GITHUB_WORKSPACE/os-scan-gate/trivy-image.json" | sha256sum --check -
+          printf '%s  %s\n' "$OS_SUMMARY_SHA256" "$GITHUB_WORKSPACE/os-scan-gate/trivy-summary.json" | sha256sum --check -
+          printf '%s  %s\n' "$OS_VERSION_SHA256" "$GITHUB_WORKSPACE/os-scan-gate/trivy-version.txt" | sha256sum --check -
           test "$OS_CRITICAL_COUNT" = "0"
           python - <<'PY'
           import json
