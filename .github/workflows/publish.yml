@@ -206,7 +206,6 @@ jobs:
         with:
           name: openwrt-mcp-os-scan-${{ github.run_id }}
           path: release-payload/os-scan
-          run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Re-verify and load exact smoke-tested image
