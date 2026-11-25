@@ -16,6 +16,7 @@ from openwrt_mcp.application import (
     InputSchema,
     InvocationKernel,
     KernelError,
+    KernelResult,
 )
 from openwrt_mcp.mcp_compat import SUPPORTED_MCP_SDK_VERSION, enforce_strict_input_schema
 from openwrt_mcp.observability import process_caller_context
@@ -311,10 +312,24 @@ async def _invoke_for_mcp(
     name: str,
     arguments: dict[str, Any],
 ) -> CallToolResult:
-    result = await kernel.invoke(name, arguments)
+    kernel_result = await kernel.invoke(name, arguments)
+    max_response_bytes = kernel.registry.get(name).max_response_bytes
+    return _bounded_call_tool_result(kernel_result, max_response_bytes)
+
+
+def _call_tool_result_size(result: CallToolResult) -> int:
+    return len(result.model_dump_json().encode("utf-8"))
+
+
+def _bounded_call_tool_result(
+    result: KernelResult,
+    max_response_bytes: int,
+) -> CallToolResult:
+    """Map one governed result and bind the final SDK-serialized MCP payload."""
+
     payload = result.as_dict()
     if result.success:
-        return CallToolResult(
+        candidate = CallToolResult(
             content=[
                 TextContent(
                     type="text",
@@ -323,15 +338,38 @@ async def _invoke_for_mcp(
             ],
             structured_content=payload,
         )
-    error = result.error or KernelError(
-        code="INTERNAL",
-        message="Unknown tool failure",
-    )
-    return CallToolResult(
-        content=[TextContent(type="text", text=f"{error.code}: {error.message}")],
-        structured_content=payload,
+    else:
+        error = result.error or KernelError(
+            code="INTERNAL",
+            message="Unknown tool failure",
+        )
+        candidate = CallToolResult(
+            content=[TextContent(type="text", text=f"{error.code}: {error.message}")],
+            structured_content=payload,
+            is_error=True,
+        )
+
+    if _call_tool_result_size(candidate) <= max_response_bytes:
+        return candidate
+
+    # Do not duplicate a large payload in text and structuredContent. The
+    # bounded replacement carries only a compact machine-readable error and no
+    # request metadata; MIN_RESPONSE_BYTES guarantees this payload fits.
+    bounded_payload = KernelResult.failed(
+        "RESPONSE_TOO_LARGE",
+        "Operation response exceeded its declared byte limit",
+    ).as_dict()
+    bounded = CallToolResult(
+        content=[],
+        structured_content=bounded_payload,
         is_error=True,
     )
+    if _call_tool_result_size(bounded) > max_response_bytes:
+        raise ValueError(
+            f"max_response_bytes cannot accommodate a bounded MCP response "
+            f"({_call_tool_result_size(bounded)} bytes required)"
+        )
+    return bounded
 
 
 def register_openwrt_tools(mcp: Any, kernel: InvocationKernel) -> None:

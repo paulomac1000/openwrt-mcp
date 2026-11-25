@@ -49,6 +49,7 @@ def manifest(
     timeout_ms: int = 1_000,
     concurrency_group: str | None = None,
     input_schema: InputSchema | None = None,
+    max_response_bytes: int = 262_144,
 ) -> CapabilityManifest:
     return CapabilityManifest(
         name=name,
@@ -64,6 +65,7 @@ def manifest(
         timeout_ms=timeout_ms,
         requires_confirmation=False,
         reversible=True,
+        max_response_bytes=max_response_bytes,
         concurrency_group=concurrency_group,
         input_schema=input_schema or InputSchema(),
     )
@@ -251,3 +253,77 @@ async def test_controlled_failure_is_sanitized_call_tool_result() -> None:
     rendered = "\n".join(str(block.text) for block in result.content)
     assert "router-secret" not in rendered
     assert "<REDACTED>" in rendered
+
+
+def call_tool_result_bytes(result: CallToolResult) -> int:
+    return len(result.model_dump_json().encode("utf-8"))
+
+
+@pytest.mark.asyncio
+async def test_oversized_failure_is_bounded_call_tool_result() -> None:
+    marker = "stderr:" + "x" * 4096
+
+    async def bad() -> dict[str, Any]:
+        return {
+            "success": False,
+            "error": {"code": "UPSTREAM_FAILURE", "message": marker},
+        }
+
+    kernel = InvocationKernel(
+        registry=CapabilityRegistry({"bad": manifest("bad", max_response_bytes=512)}),
+        operations={"bad": bad},
+        target_identity="router",
+    )
+    result = await _invoke_for_mcp(kernel, "bad", {})
+    assert isinstance(result, CallToolResult)
+    assert result.is_error is True
+    assert result.structured_content is not None
+    assert result.structured_content["error"]["code"] == "RESPONSE_TOO_LARGE"
+    assert marker not in result.model_dump_json()
+    assert call_tool_result_bytes(result) <= 512
+
+
+@pytest.mark.asyncio
+async def test_mcp_text_and_structured_duplication_cannot_bypass_budget() -> None:
+    payload = "x" * 300  # Kernel result fits 512 bytes; duplicated MCP result does not.
+
+    async def near_budget() -> dict[str, Any]:
+        return {"success": True, "payload": payload}
+
+    kernel = InvocationKernel(
+        registry=CapabilityRegistry({"read": manifest("read", max_response_bytes=512)}),
+        operations={"read": near_budget},
+        target_identity="router",
+    )
+    result = await _invoke_for_mcp(kernel, "read", {})
+    assert isinstance(result, CallToolResult)
+    assert result.is_error is True
+    assert result.structured_content is not None
+    assert result.structured_content["error"]["code"] == "RESPONSE_TOO_LARGE"
+    assert call_tool_result_bytes(result) <= 512
+
+
+@pytest.mark.asyncio
+async def test_ordinary_failure_semantics_survive_budget_boundaries() -> None:
+    async def failed() -> dict[str, Any]:
+        return {
+            "success": False,
+            "error": {
+                "code": "UPSTREAM_FAILURE",
+                "message": "safe upstream failure",
+                "retryable": True,
+            },
+        }
+
+    kernel = InvocationKernel(
+        registry=CapabilityRegistry({"read": manifest("read", max_response_bytes=512)}),
+        operations={"read": failed},
+        target_identity="router",
+    )
+    result = await _invoke_for_mcp(kernel, "read", {})
+    assert isinstance(result, CallToolResult)
+    assert result.is_error is True
+    assert result.structured_content is not None
+    assert result.structured_content["error"]["code"] == "UPSTREAM_FAILURE"
+    assert result.structured_content["error"]["retryable"] is True
+    assert call_tool_result_bytes(result) <= 512
