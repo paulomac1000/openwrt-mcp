@@ -341,7 +341,7 @@ class OpenWRTExplorer:
         raw, error, code = await self._run(f"logread -l {bounded}")
         if code != 0:
             return {"success": False, "error": error or "Failed to read logs"}
-        values = raw.splitlines()
+        values = sanitize_response_data(raw).splitlines()
         if filter_level != "all":
             needle = filter_level.casefold()
             values = [line for line in values if needle in line.casefold()]
@@ -364,7 +364,8 @@ class OpenWRTExplorer:
         raw, error, code = await self._run("logread -l 500")
         if code != 0:
             return {"success": False, "error": error or "Failed to read logs"}
-        matches = [line for line in raw.splitlines() if search_term.casefold() in line.casefold()]
+        safe_lines = sanitize_response_data(raw).splitlines()
+        matches = [line for line in safe_lines if search_term.casefold() in line.casefold()]
         bounded = min(max(int(max_results), 1), 100)
         preview = sanitize_response_data("\n".join(matches[-bounded:]))
         return {
@@ -474,15 +475,14 @@ class OpenWRTExplorer:
         events = []
         any_line_clipped = False
         term = search_term.casefold()
-        for line in raw.splitlines():
+        for line in sanitize_response_data(raw).splitlines():
             folded = line.casefold()
             if term not in folded or ("dhcp" not in folded and "dnsmasq" not in folded):
                 continue
-            safe_line = sanitize_response_data(line)
-            any_line_clipped |= len(safe_line) > 200
+            any_line_clipped |= len(line) > 200
             events.append(
                 {
-                    "raw_log": safe_line[:200],
+                    "raw_log": line[:200],
                     "event_type": self._dhcp_event_type(line),
                     "contains_search_term": True,
                 }

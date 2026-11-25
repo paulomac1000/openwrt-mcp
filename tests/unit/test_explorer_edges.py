@@ -93,6 +93,14 @@ async def test_clipped_log_preview_reports_truncation(tmp_path: Path) -> None:
     assert result["truncated"] is True
 
 
+async def test_log_search_redacts_multiline_credentials_before_selection(tmp_path: Path) -> None:
+    canary = "SYNTHETIC-KEY-6ED2"
+    raw = f"-----BEGIN PRIVATE KEY-----\ndnsmasq {canary}\n-----END PRIVATE KEY-----\n"
+    router = explorer(tmp_path, {"logread -l 500": (raw, "", 0)})
+    assert canary not in repr(await router.search_router_logs("dnsmasq"))
+    assert canary not in repr(await router.search_dhcp_logs("dnsmasq"))
+
+
 async def test_dhcp_details_do_not_infer_absence_from_truncated_leases(tmp_path: Path) -> None:
     raw = "1893456000 02:00:00:00:01 192.0.2.2 client *\n" * 51
     router = explorer(
