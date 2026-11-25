@@ -21,8 +21,9 @@ from openwrt_mcp.validators import ValidationError
 
 Operation = Callable[..., Awaitable[dict[str, Any]]]
 _MISSING = object()
-_MIN_RESPONSE_BYTES = 512
+_MIN_RESPONSE_BYTES = 128
 MIN_RESPONSE_BYTES = _MIN_RESPONSE_BYTES
+MIN_MCP_RESPONSE_BYTES = 256
 
 
 def json_byte_size(value: object) -> int:
@@ -319,7 +320,7 @@ class InvocationKernel:
 
         bounded = KernelResult.failed(
             "RESPONSE_TOO_LARGE",
-            "Operation response exceeded its declared byte limit",
+            "Response exceeded limit",
             meta=meta,
         )
         if json_byte_size(bounded.as_dict()) <= manifest.max_response_bytes:
@@ -329,7 +330,7 @@ class InvocationKernel:
         # smallest supported manifest budget; request metadata is expendable.
         bounded = KernelResult.failed(
             "RESPONSE_TOO_LARGE",
-            "Operation response exceeded its declared byte limit",
+            "Response exceeded limit",
         )
         bounded_size = json_byte_size(bounded.as_dict())
         if bounded_size > manifest.max_response_bytes:

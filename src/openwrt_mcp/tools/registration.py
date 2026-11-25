@@ -10,6 +10,7 @@ from mcp.types import CallToolResult, TextContent
 
 from openwrt_mcp import __version__
 from openwrt_mcp.application import (
+    MIN_MCP_RESPONSE_BYTES,
     CapabilityManifest,
     CapabilityRegistry,
     InputField,
@@ -312,9 +313,17 @@ async def _invoke_for_mcp(
     name: str,
     arguments: dict[str, Any],
 ) -> CallToolResult:
+    manifest = kernel.registry.get(name)
+    if manifest.max_response_bytes < MIN_MCP_RESPONSE_BYTES:
+        raise ValueError(
+            f"MCP manifest {name} must reserve at least "
+            f"{MIN_MCP_RESPONSE_BYTES} bytes for the final serialized result"
+        )
     kernel_result = await kernel.invoke(name, arguments)
-    max_response_bytes = kernel.registry.get(name).max_response_bytes
-    return _bounded_call_tool_result(kernel_result, max_response_bytes)
+    return _bounded_call_tool_result(
+        kernel_result,
+        manifest.max_response_bytes,
+    )
 
 
 def _call_tool_result_size(result: CallToolResult) -> int:

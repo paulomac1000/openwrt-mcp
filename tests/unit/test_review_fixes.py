@@ -260,6 +260,23 @@ def call_tool_result_bytes(result: CallToolResult) -> int:
 
 
 @pytest.mark.asyncio
+async def test_mcp_manifest_reserves_bounded_final_payload() -> None:
+    async def success() -> dict[str, Any]:
+        return {"success": True}
+
+    kernel = InvocationKernel(
+        registry=CapabilityRegistry(
+            {"small": manifest("small", max_response_bytes=128)},
+        ),
+        operations={"small": success},
+        target_identity="router",
+    )
+    with pytest.raises(ValueError, match="at least 256 bytes"):
+        await _invoke_for_mcp(kernel, "small", {})
+    assert manifest("small", max_response_bytes=256).max_response_bytes == 256
+
+
+@pytest.mark.asyncio
 async def test_oversized_failure_is_bounded_call_tool_result() -> None:
     marker = "stderr:" + "x" * 4096
 
