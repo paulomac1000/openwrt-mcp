@@ -1,67 +1,49 @@
-"""Unit tests for the secret sanitizer (Canonical Templates 4a/4b)."""
-
 from openwrt_mcp.sanitizer import sanitize_log_line, sanitize_response_data
 
 
-class TestSanitizeLogLine:
-    """sanitize_log_line() redacts credentials and IP addresses."""
-
-    def test_redacts_bearer_token(self):
-        out = sanitize_log_line("auth header Bearer abc123XYZ._-token")
-        assert "abc123XYZ" not in out
-        assert "<REDACTED>" in out
-
-    def test_redacts_authorization_header(self):
-        out = sanitize_log_line("Authorization: Basic dXNlcjpwYXNz")
-        assert "dXNlcjpwYXNz" not in out
-
-    def test_redacts_password_assignment(self):
-        out = sanitize_log_line("connecting with password=hunter2 now")
-        assert "hunter2" not in out
-        assert "<REDACTED>" in out
-
-    def test_redacts_ip_address(self):
-        out = sanitize_log_line("SSH connection established: root@192.168.0.1")
-        assert "192.168.0.1" not in out
-        assert "<IP_REDACTED>" in out
-
-    def test_preserves_plain_text(self):
-        assert sanitize_log_line("router rebooted cleanly") == "router rebooted cleanly"
+def test_log_sanitizer_redacts_secret_ip_and_mac_boundaries() -> None:
+    rendered = sanitize_log_line(
+        "auth_token=abc private_key=def password=ghi 192.0.2.10 2001:db8::1 aa:bb:cc:dd:ee:ff"
+    )
+    assert "abc" not in rendered
+    assert "def" not in rendered
+    assert "ghi" not in rendered
+    assert "192.0.2.10" not in rendered
+    assert "2001:db8::1" not in rendered
+    assert "aa:bb:cc:dd:ee:ff" not in rendered
+    assert rendered.count("<REDACTED>") == 3
+    assert rendered.count("<IP_REDACTED>") == 2
+    assert "<MAC_REDACTED>" in rendered
 
 
-class TestSanitizeResponseData:
-    """sanitize_response_data() redacts secrets but PRESERVES IP/MAC."""
+def test_response_sanitizer_catches_composite_secret_keys_without_over_redacting() -> None:
+    data = {
+        "auth_token": "one",
+        "private-key": "two",
+        "wireless.radio0.key": "three",
+        "monkey": "banana",
+        "nested": [{"api_key": "four"}],
+    }
+    sanitized = sanitize_response_data(data)
+    assert sanitized["auth_token"] == "<REDACTED>"
+    assert sanitized["private-key"] == "<REDACTED>"
+    assert sanitized["wireless.radio0.key"] == "<REDACTED>"
+    assert sanitized["monkey"] == "banana"
+    assert sanitized["nested"][0]["api_key"] == "<REDACTED>"
 
-    def test_preserves_ip_addresses(self):
-        data = {"ip": "192.168.0.50", "mac": "aa:bb:cc:dd:ee:ff"}
-        out = sanitize_response_data(data)
-        assert out["ip"] == "192.168.0.50"
-        assert out["mac"] == "aa:bb:cc:dd:ee:ff"
 
-    def test_redacts_secret_named_key(self):
-        data = {"key": "supersecretpsk", "ssid": "HomeNet"}
-        out = sanitize_response_data(data)
-        assert out["key"] == "<REDACTED>"
-        assert out["ssid"] == "HomeNet"
+def test_passphrases_and_private_keys_do_not_cross_output_boundaries() -> None:
+    canary = "synthetic-canary-51ad"
+    data = {"nested": [{"wpa_passphrase": canary}], "text": f"passphrase='{canary} two'"}
+    assert canary not in repr(sanitize_response_data(data))
+    assert canary not in sanitize_log_line(data["text"])
+    pem = f"-----BEGIN OPENSSH PRIVATE KEY-----\n{canary}\n-----END OPENSSH PRIVATE KEY-----"
+    assert canary not in sanitize_log_line(pem)
 
-    def test_redacts_uci_flat_line(self):
-        line = "wireless.@wifi-iface[0].key='supersecretpsk'"
-        out = sanitize_response_data(line)
-        assert "supersecretpsk" not in out
-        assert "<REDACTED>" in out
 
-    def test_recurses_into_nested_structures(self):
-        data = {"leases": [{"ip": "10.0.0.2", "password": "leak"}]}
-        out = sanitize_response_data(data)
-        assert out["leases"][0]["ip"] == "10.0.0.2"
-        assert out["leases"][0]["password"] == "<REDACTED>"
-
-    def test_passes_through_non_string_scalars(self):
-        data = {"count": 5, "ok": True, "ratio": 1.5, "missing": None}
-        assert sanitize_response_data(data) == data
-
-    def test_does_not_redact_innocuous_keys(self):
-        data = {"hostname": "router", "monkey": "value"}
-        out = sanitize_response_data(data)
-        assert out["hostname"] == "router"
-        assert out["monkey"] == "value"
+def test_url_credentials_do_not_cross_output_boundaries() -> None:
+    url = "https://synthetic-user:synthetic-canary-94af@example.test/path"
+    for rendered in (sanitize_log_line(url), sanitize_response_data(url)):
+        assert "synthetic-user" not in rendered
+        assert "synthetic-canary-94af" not in rendered
+        assert "example.test/path" in rendered

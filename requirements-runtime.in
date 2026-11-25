@@ -1,0 +1,6 @@
+mcp==2.3.0
+asyncssh==2.24.0
+# Transitive security overrides: mcp 2.3.0 resolves pyjwt 2.13.0 and opentelemetry-api 1.44.0,
+# both of which have known advisories.
+pyjwt==2.15.1
+opentelemetry-api==1.45.2

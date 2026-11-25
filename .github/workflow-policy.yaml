@@ -1,0 +1,4 @@
+schema_version: 1
+workflows:
+  .github/workflows/ci.yml: trusted-ci
+  .github/workflows/publish.yml: protected-release

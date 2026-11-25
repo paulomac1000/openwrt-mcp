@@ -1,86 +1,298 @@
-name: Create and publish a Docker image
+# ai-skills-policy-profile: protected-release
+name: Publish tested container
 
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
-  push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: publish-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  group: publish-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-push-image:
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+  verify-ci-payload:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
-      contents: write
-      packages: write
-      attestations: write
-      id-token: write
-
+      actions: read
+      contents: read
+    outputs:
+      evidence_sha256: ${{ steps.verify.outputs.evidence_sha256 }}
+      image_sha256: ${{ steps.verify.outputs.image_sha256 }}
+      image_id: ${{ steps.verify.outputs.image_id }}
+      os_report_sha256: ${{ steps.os-scan.outputs.os_report_sha256 }}
+      os_summary_sha256: ${{ steps.os-scan.outputs.os_summary_sha256 }}
+      os_version_sha256: ${{ steps.os-scan.outputs.os_version_sha256 }}
+      os_critical_count: ${{ steps.os-scan.outputs.os_critical_count }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - name: Download minimal exact release payload
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          name: openwrt-mcp-release-${{ github.event.workflow_run.id }}
+          path: release-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      - name: Verify closed CI payload without executing it
+        id: verify
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd release-payload
+          sha256sum --check ci-evidence.sha256
+          sha256sum --check image.sha256
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v4
+          evidence = json.loads(Path("ci-evidence.json").read_text(encoding="utf-8"))
+          if evidence["provider"] != "github-actions":
+              raise SystemExit("unexpected evidence provider")
+          if evidence["repository"] != os.environ["EXPECTED_REPOSITORY"]:
+              raise SystemExit("repository identity mismatch")
+          if evidence["revision"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("source revision mismatch")
+          if evidence["run_id"] != int(os.environ["EXPECTED_RUN_ID"]):
+              raise SystemExit("producer run mismatch")
+          if evidence["image"]["source_revision"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("image source label mismatch")
+          PY
+          docker load --input image.tar.gz
+          image="openwrt-mcp:ci-$EXPECTED_SHA"
+          docker image inspect "$image" | python -c '
+          import json, os, sys
+          from pathlib import Path
+          evidence = json.loads(Path("ci-evidence.json").read_text(encoding="utf-8"))
+          image = json.load(sys.stdin)[0]
+          labels = image["Config"]["Labels"]
+          if (image["Id"] != evidence["image"]["image_id"]
+              or labels["org.opencontainers.image.revision"] != os.environ["EXPECTED_SHA"]
+              or labels["org.opencontainers.image.version"] != evidence["image"]["version"]
+              or "sha256:" + labels["io.openwrt-mcp.wheel.sha256"] != evidence["artifacts"]["wheel"]["digest"]):
+              raise SystemExit("release image provenance mismatch")
+          '
+          echo "evidence_sha256=$(sha256sum ci-evidence.json | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "image_sha256=$(sha256sum image.tar.gz | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "image_id=$(docker image inspect --format '{{.Id}}' "$image")" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare exact image vulnerability scan
+        run: mkdir -p release-payload/os-scan
+
+      - name: Scan exact image archive with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          registry: ${{ env.REGISTRY }}
+          scan-type: image
+          input: release-payload/image.tar.gz
+          scanners: vuln
+          vuln-type: os,library
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          format: json
+          output: release-payload/os-scan/trivy-image.json
+          exit-code: '0'
+          timeout: 20m0s
+          version: v0.76.2
+          cache: 'false'
+
+      - name: Bind OS scan verdict to exact release payload
+        id: os-scan
+        run: |
+          set -euo pipefail
+          cd release-payload
+          trivy --version > os-scan/trivy-version.txt
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          report = json.loads(Path("os-scan/trivy-image.json").read_text())
+          if report.get("SchemaVersion") != 2:
+              raise SystemExit("unsupported Trivy report schema")
+          if not report.get("CreatedAt"):
+              raise SystemExit("Trivy report has no scan timestamp")
+          artifact_name = report.get("ArtifactName")
+          if not isinstance(artifact_name, str) or not artifact_name.endswith("image.tar.gz"):
+              raise SystemExit("Trivy report is not bound to the release image archive")
+          results = report.get("Results")
+          if not isinstance(results, list):
+              raise SystemExit("Trivy report has no results array")
+          os_results = [
+              result for result in results
+              if result.get("Class") == "os-pkgs" and "debian" in str(result.get("Target", "")).casefold()
+          ]
+          if not os_results:
+              raise SystemExit("Trivy report has no Debian OS package scan result")
+
+          totals = Counter()
+          results_summary = []
+          for result in results:
+              vulnerabilities = result.get("Vulnerabilities") or []
+              counts = Counter(item.get("Severity", "UNKNOWN") for item in vulnerabilities)
+              totals.update(counts)
+              results_summary.append({
+                  "target": result.get("Target"),
+                  "class": result.get("Class"),
+                  "type": result.get("Type"),
+                  "count": len(vulnerabilities),
+                  "severityCounts": dict(counts),
+              })
+          critical = totals["CRITICAL"]
+          summary = {
+              "scanner": Path("os-scan/trivy-version.txt").read_text().strip(),
+              "scannedAt": report.get("CreatedAt"),
+              "artifactName": artifact_name,
+              "ignoreFile": "none",
+              "osResultCount": len(os_results),
+              "totals": dict(totals),
+              "results": results_summary,
+          }
+          Path("os-scan/trivy-summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          if critical:
+              raise SystemExit(f"release blocked: {critical} CRITICAL OS vulnerabilities")
+          PY
+          echo "os_report_sha256=$(sha256sum os-scan/trivy-image.json | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "os_summary_sha256=$(sha256sum os-scan/trivy-summary.json | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "os_version_sha256=$(sha256sum os-scan/trivy-version.txt | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "os_critical_count=$critical" >> "$GITHUB_OUTPUT"
+
+      - name: Retain exact image vulnerability scan
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openwrt-mcp-os-scan-${{ github.run_id }}
+          path: release-payload/os-scan
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    if: github.event.workflow_run.conclusion == 'success'
+    needs: verify-ci-payload
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ghcr-production
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download minimal exact release payload
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: openwrt-mcp-release-${{ github.event.workflow_run.id }}
+          path: release-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download verified OS vulnerability scan
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: openwrt-mcp-os-scan-${{ github.run_id }}
+          path: release-payload/os-scan
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Re-verify and load exact smoke-tested image
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          VERIFIED_IMAGE_SHA256: ${{ needs.verify-ci-payload.outputs.image_sha256 }}
+          VERIFIED_EVIDENCE_SHA256: ${{ needs.verify-ci-payload.outputs.evidence_sha256 }}
+          VERIFIED_IMAGE_ID: ${{ needs.verify-ci-payload.outputs.image_id }}
+          OS_REPORT_SHA256: ${{ needs.verify-ci-payload.outputs.os_report_sha256 }}
+          OS_SUMMARY_SHA256: ${{ needs.verify-ci-payload.outputs.os_summary_sha256 }}
+          OS_VERSION_SHA256: ${{ needs.verify-ci-payload.outputs.os_version_sha256 }}
+          OS_CRITICAL_COUNT: ${{ needs.verify-ci-payload.outputs.os_critical_count }}
+        run: |
+          set -euo pipefail
+          cd release-payload
+          printf '%s  ci-evidence.json\n' "$VERIFIED_EVIDENCE_SHA256" | sha256sum --check -
+          printf '%s  image.tar.gz\n' "$VERIFIED_IMAGE_SHA256" | sha256sum --check -
+          sha256sum --check ci-evidence.sha256
+          sha256sum --check image.sha256
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = json.loads(Path("ci-evidence.json").read_text(encoding="utf-8"))
+          expected = {
+              "provider": "github-actions",
+              "repository": os.environ["EXPECTED_REPOSITORY"],
+              "revision": os.environ["EXPECTED_SHA"],
+              "run_id": int(os.environ["EXPECTED_RUN_ID"]),
+          }
+          for key, value in expected.items():
+              if evidence.get(key) != value:
+                  raise SystemExit(f"evidence mismatch for {key}")
+          if evidence["image"]["source_revision"] != os.environ["EXPECTED_SHA"]:
+              raise SystemExit("image source label mismatch")
+          PY
+          docker load --input image.tar.gz
+          image="openwrt-mcp:ci-$EXPECTED_SHA"
+          test "$(docker image inspect --format '{{.Id}}' "$image")" = "$VERIFIED_IMAGE_ID"
+          test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$EXPECTED_SHA"
+          printf '%s  trivy-image.json\n' "$OS_REPORT_SHA256" | sha256sum --check -
+          printf '%s  trivy-summary.json\n' "$OS_SUMMARY_SHA256" | sha256sum --check -
+          printf '%s  trivy-version.txt\n' "$OS_VERSION_SHA256" | sha256sum --check -
+          test "$OS_CRITICAL_COUNT" = "0"
+          python - <<'PY'
+          import json
+          summary = json.load(open("os-scan/trivy-summary.json", encoding="utf-8"))
+          if summary.get("ignoreFile") != "none" or summary.get("osResultCount", 0) < 1:
+              raise SystemExit("release OS scan evidence is incomplete or suppressed")
+          if summary.get("totals", {}).get("CRITICAL", 0) != 0:
+              raise SystemExit("release OS scan contains CRITICAL findings")
+          PY
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        with:
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
-
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Generate artifact attestation
-        uses: actions/attest@v4
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          make_latest: true
+      - name: Promote exact CI image
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERIFIED_IMAGE_ID: ${{ needs.verify-ci-payload.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          target="ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}"
+          docker tag "$VERIFIED_IMAGE_ID" "$target"
+          docker push "$target"
+
+      - name: Resolve pushed digest
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}"
+          docker pull "$tag"
+          digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$tag" | cut -d@ -f2)"
+          test -n "$digest"
+          echo "value=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Attest pushed digest
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.digest.outputs.value }}
+          push-to-registry: true
