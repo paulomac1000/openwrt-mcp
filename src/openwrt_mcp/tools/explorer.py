@@ -685,11 +685,16 @@ class OpenWRTExplorer:
     async def wifi_scan(self, radio: str = "wlan0") -> dict[str, Any]:
         radio = SecurityValidator.validate_interface_name(radio)
         stdout, stderr, code = await self._run(f"iwinfo {radio} scan")
-        if code != 0:
-            return {"success": False, "error": stderr or "WiFi scan failed"}
-        if stdout.lstrip().startswith("Usage:"):
-            return {"success": False, "error": "WiFi interface unavailable"}
-        networks = self._parse_wifi_scan(stdout)
+        if code == 0 and not stdout.lstrip().startswith("Usage:"):
+            networks = self._parse_wifi_scan(stdout)
+        else:
+            stdout, stderr, code = await self._run(f"iw dev {radio} scan")
+            if code != 0 and (code == 240 or "resource busy" in stderr.casefold()):
+                await self._run(f"iw dev {radio} scan abort")
+                stdout, stderr, code = await self._run(f"iw dev {radio} scan")
+            if code != 0:
+                return {"success": False, "error": stderr or "WiFi scan failed"}
+            networks = self._parse_iw_scan(stdout)
         return {
             "success": True,
             "radio": radio,
@@ -698,6 +703,34 @@ class OpenWRTExplorer:
             "truncated": len(networks) > 20,
             "networks": networks[:20],
         }
+
+    @staticmethod
+    def _parse_iw_scan(raw: str) -> list[dict[str, Any]]:
+        networks: list[dict[str, Any]] = []
+        current: dict[str, Any] = {}
+        for line in raw.splitlines():
+            stripped = line.strip()
+            bssid = re.match(r"BSS\s+([0-9A-Fa-f:]{17})", stripped)
+            if bssid:
+                if current:
+                    networks.append(current)
+                current = {"bssid": bssid.group(1).lower()}
+                continue
+            if not current:
+                continue
+            if stripped.startswith("SSID:"):
+                current["ssid"] = stripped.split("SSID:", 1)[1].strip()
+            elif stripped.startswith("signal:"):
+                current["signal"] = stripped.split("signal:", 1)[1].strip()
+            elif stripped.startswith("freq:"):
+                current["channel"] = stripped.split("freq:", 1)[1].strip().split()[0]
+            elif stripped.startswith("capability:") and "ESS" in stripped:
+                current["mode"] = "Master"
+            elif stripped.startswith("capability:") and "IBSS" in stripped:
+                current["mode"] = "Ad-Hoc"
+        if current:
+            networks.append(current)
+        return networks
 
     @staticmethod
     def _parse_wifi_scan(raw: str) -> list[dict[str, Any]]:
