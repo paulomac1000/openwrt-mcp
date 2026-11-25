@@ -368,7 +368,41 @@ async def test_wifi_scan_reads_cached_iw_results_after_iwinfo_failure(tmp_path: 
     assert result["networks"][0]["ssid"] == "OpenWrt"
     assert result["networks"][0]["mode"] == "Master"
     assert result["networks"][0]["channel"] == "6"
+    assert result["scan_source"] == "iw-scan-cache"
+    assert result["cached"] is True
+    assert result["freshness"] == "unverified"
     assert router.ssh.commands == ["iwinfo wlan0 scan", "iw dev wlan0 scan dump"]
+
+
+@pytest.mark.parametrize(
+    ("frequency", "channel"),
+    [("2484", "14"), ("5935", "2"), ("5955", "1"), ("7115", "233")],
+)
+def test_iw_frequency_channel_parity(frequency: str, channel: str) -> None:
+    parsed = OpenWRTExplorer._parse_iw_scan(
+        f"BSS 02:00:00:00:00:01(on wlan0)\n\tfreq: {frequency}\n\tSSID: OpenWrt\n"
+    )
+    assert parsed[0]["channel"] == channel
+
+
+async def test_wifi_scan_uses_fresh_iw_scan_when_iwinfo_is_missing(tmp_path: Path) -> None:
+    router = explorer(
+        tmp_path,
+        {
+            "iwinfo wlan0 scan": ("", "iwinfo: not found", 127),
+            "iw dev wlan0 scan": (
+                "BSS 02:00:00:00:00:01(on wlan0)\n\tfreq: 2437.0\n\tSSID: OpenWrt\n",
+                "",
+                0,
+            ),
+        },
+    )
+    result = await router.wifi_scan("wlan0")
+    assert result["success"] is True
+    assert result["scan_source"] == "iw"
+    assert result["cached"] is False
+    assert result["freshness"] == "current-request"
+    assert router.ssh.commands == ["iwinfo wlan0 scan", "iw dev wlan0 scan"]
 
 
 async def test_wifi_scan_does_not_reissue_after_ssh_connection_loss(tmp_path: Path) -> None:

@@ -55,7 +55,7 @@ class SecurityValidator:
         r"^cat /etc/openwrt_(?:version|release)$",
         r"^(?:df -h|free|top -bn1|ps|ip addr show|ip route show|iwinfo|iw dev)$",
         r"^iwinfo [A-Za-z0-9._-]+ (?:info|scan)$",
-        r"^iw dev [A-Za-z0-9._-]+ scan dump$",
+        r"^iw dev [A-Za-z0-9._-]+ scan(?: dump)?$",
         r"^ping -c \d+(?: -W \d+)? [\w.:-]+$",
         r"^nslookup [\w.:-]+(?: [\w.:-]+)?$",
         r"^traceroute(?: -n)? [\w.:-]+$",

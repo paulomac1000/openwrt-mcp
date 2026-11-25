@@ -687,6 +687,17 @@ class OpenWRTExplorer:
         stdout, stderr, code = await self._run(f"iwinfo {radio} scan")
         if code == 0 and not stdout.lstrip().startswith("Usage:"):
             networks = self._parse_wifi_scan(stdout)
+            scan_source = "iwinfo"
+            cached = False
+            freshness = "current-request"
+        elif code == 127 and "not found" in (stderr or stdout).casefold():
+            stdout, stderr, code = await self._run(f"iw dev {radio} scan")
+            if code != 0:
+                return {"success": False, "error": stderr or "WiFi scan failed"}
+            networks = self._parse_iw_scan(stdout)
+            scan_source = "iw"
+            cached = False
+            freshness = "current-request"
         elif (
             code == 1 and (stderr or stdout) and not self._is_ssh_transport_error(stderr or stdout)
         ):
@@ -696,11 +707,17 @@ class OpenWRTExplorer:
             networks = self._parse_iw_scan(stdout)
             if not networks:
                 return {"success": False, "error": "WiFi scan produced no cached results"}
+            scan_source = "iw-scan-cache"
+            cached = True
+            freshness = "unverified"
         else:
             return {"success": False, "error": stderr or "WiFi scan failed"}
         return {
             "success": True,
             "radio": radio,
+            "scan_source": scan_source,
+            "cached": cached,
+            "freshness": freshness,
             "networks_found": len(networks),
             "networks_returned": min(len(networks), 20),
             "truncated": len(networks) > 20,
@@ -729,6 +746,8 @@ class OpenWRTExplorer:
             mhz = int(float(frequency))
         except ValueError:
             return None
+        if mhz == 2484:
+            return "14"
         if 2412 <= mhz <= 2472 and (mhz - 2412) % 5 == 0:
             return str((mhz - 2412) // 5 + 1)
         if 5180 <= mhz <= 5240 and (mhz - 5180) % 5 == 0:
@@ -739,6 +758,8 @@ class OpenWRTExplorer:
             return str((mhz - 5500) // 5 + 100)
         if 5745 <= mhz <= 5825 and (mhz - 5745) % 5 == 0:
             return str((mhz - 5745) // 5 + 149)
+        if mhz == 5935:
+            return "2"
         if 5955 <= mhz <= 7115 and (mhz - 5955) % 5 == 0:
             return str((mhz - 5955) // 5 + 1)
         return None
