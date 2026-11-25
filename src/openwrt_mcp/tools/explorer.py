@@ -694,16 +694,20 @@ class OpenWRTExplorer:
             stdout, stderr, code = await self._run(f"iw dev {radio} scan")
             if code != 0:
                 return {"success": False, "error": stderr or "WiFi scan failed"}
+            if self._iw_scan_aborted(stdout, stderr):
+                return {"success": False, "error": "WiFi scan aborted"}
             networks = self._parse_iw_scan(stdout)
             scan_source = "iw"
             cached = False
-            freshness = "current-request"
+            freshness = "unverified"
         elif (
             code == 1 and (stderr or stdout) and not self._is_ssh_transport_error(stderr or stdout)
         ):
             stdout, stderr, code = await self._run(f"iw dev {radio} scan dump")
             if code != 0:
                 return {"success": False, "error": stderr or "WiFi scan failed"}
+            if self._iw_scan_aborted(stdout, stderr):
+                return {"success": False, "error": "WiFi scan aborted"}
             networks = self._parse_iw_scan(stdout)
             if not networks:
                 return {"success": False, "error": "WiFi scan produced no cached results"}
@@ -723,6 +727,13 @@ class OpenWRTExplorer:
             "truncated": len(networks) > 20,
             "networks": networks[:20],
         }
+
+    @staticmethod
+    def _iw_scan_aborted(stdout: str, stderr: str) -> bool:
+        return any(
+            line.strip().casefold() in {"scan aborted", "scan aborted!"}
+            for line in f"{stdout}\n{stderr}".splitlines()
+        )
 
     @staticmethod
     def _is_ssh_transport_error(message: str) -> bool:

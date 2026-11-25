@@ -401,8 +401,38 @@ async def test_wifi_scan_uses_fresh_iw_scan_when_iwinfo_is_missing(tmp_path: Pat
     assert result["success"] is True
     assert result["scan_source"] == "iw"
     assert result["cached"] is False
-    assert result["freshness"] == "current-request"
+    assert result["freshness"] == "unverified"
     assert router.ssh.commands == ["iwinfo wlan0 scan", "iw dev wlan0 scan"]
+
+
+async def test_wifi_scan_rejects_explicit_iw_abort_diagnostic(tmp_path: Path) -> None:
+    router = explorer(
+        tmp_path,
+        {
+            "iwinfo wlan0 scan": ("", "iwinfo: not found", 127),
+            "iw dev wlan0 scan": ("scan aborted!\n", "", 0),
+        },
+    )
+    result = await router.wifi_scan("wlan0")
+    assert result["success"] is False
+    assert result["error"] == "WiFi scan aborted"
+
+
+async def test_wifi_scan_does_not_treat_ssid_as_iw_abort_diagnostic(tmp_path: Path) -> None:
+    router = explorer(
+        tmp_path,
+        {
+            "iwinfo wlan0 scan": ("", "iwinfo: not found", 127),
+            "iw dev wlan0 scan": (
+                "BSS 02:00:00:00:00:01(on wlan0)\n\tfreq: 2437.0\n\tSSID: scan aborted\n",
+                "",
+                0,
+            ),
+        },
+    )
+    result = await router.wifi_scan("wlan0")
+    assert result["success"] is True
+    assert result["networks"][0]["ssid"] == "scan aborted"
 
 
 async def test_wifi_scan_does_not_reissue_after_ssh_connection_loss(tmp_path: Path) -> None:
