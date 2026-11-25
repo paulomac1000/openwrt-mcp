@@ -71,8 +71,20 @@ For stdio clients which do not need an HTTP health port, set `HEALTH_ENABLED=0`.
 CI builds the wheel first, builds the image exactly once from that wheel plus the reviewed hashed runtime lockfile, smoke-tests that exact image, and exports it for later promotion. The image runs as UID 10001, uses `SIGINT` for graceful Docker stop, and includes a loopback `/live` health check.
 
 ```bash
-python -m build --wheel --no-isolation
-docker build -t openwrt-mcp:local .
+# From an exact, clean source revision, with the locked development environment active:
+test -z "$(git status --porcelain)" && test ! -e dist && (
+  set -eu
+  revision=$(git rev-parse HEAD)
+  source_tree=$(mktemp -d)
+  git archive "$revision" -o "$source_tree/source.tar"
+  tar -xf "$source_tree/source.tar" -C "$source_tree"
+  SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$revision") \
+    python -m build --wheel --no-isolation --outdir "$PWD/dist" "$source_tree"
+  wheel_hash=$(sha256sum dist/*.whl | cut -d ' ' -f1)
+  app_version=$(PYTHONPATH="$source_tree/src" python -c 'import openwrt_mcp; print(openwrt_mcp.__version__)')
+  docker build --build-arg "SOURCE_REVISION=$revision" --build-arg "APP_VERSION=$app_version" \
+    --build-arg "WHEEL_SHA256=$wheel_hash" -t openwrt-mcp:local .
+)
 ```
 
 Run the container under an MCP host that attaches to its stdio. Mount the private key and known-hosts file read-only. For hardened deployments, also use a read-only root filesystem, drop Linux capabilities, set `no-new-privileges`, and provide writable storage only for `/tmp` and the audit-log location if audit logging is enabled.

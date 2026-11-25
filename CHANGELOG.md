@@ -13,6 +13,9 @@
 - isolated exact-artifact stdio smoke subprocesses with an explicit child-environment allowlist
 - removed duplicate feature-branch `push` CI for open PRs; the authoritative feature-branch path is `pull_request`, while `main` remains a push trigger
 - expanded the real-router acceptance gate to six cases, including an official-client pass across all 19 active read tools; the current v2 candidate requires a fresh **6 passed, 0 failed, 0 skipped** lab record on its exact final SHA
+- redacted passphrases, private-key blocks and URL credentials; stopped recording SSH command arguments and echoing UCI set errors
+- added installed package inventory on APK-based OpenWrt, disclosed sampled-data truncation, and stopped inferring repeater mode from the absence of AP interfaces
+- verified wheel digest and runtime version during image build and exposed installed image provenance through readiness and MCP capability discovery
 - updated the observed red `ai-skills` unified-contract candidate to `b54fc6b27ea80b36a70d5de73445970e17f55789`; the project intentionally keeps the last green immutable baseline `661ff01a5e70d58d6c94a12545b24647e52063ed` until upstream schema/docs/validators and CI are internally consistent
 
 The `1.3.0` and `1.4.0` entries below are historical migration checkpoints from this unmerged branch. They were never published repository tags and are superseded by the `2.0.0` release contract.
