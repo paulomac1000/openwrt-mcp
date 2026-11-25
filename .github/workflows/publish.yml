@@ -211,11 +211,17 @@ jobs:
       - name: Normalize verified OS scan location
         run: |
           set -euo pipefail
-          mkdir -p release-payload/os-scan
+          rm -rf os-scan-gate
+          mkdir -p os-scan-gate
           test -f os-scan-download/trivy-image.json
           test -f os-scan-download/trivy-summary.json
           test -f os-scan-download/trivy-version.txt
-          cp -a os-scan-download/. release-payload/os-scan/
+          cp os-scan-download/trivy-image.json os-scan-gate/
+          cp os-scan-download/trivy-summary.json os-scan-gate/
+          cp os-scan-download/trivy-version.txt os-scan-gate/
+          test -f "$GITHUB_WORKSPACE/os-scan-gate/trivy-image.json"
+          test -f "$GITHUB_WORKSPACE/os-scan-gate/trivy-summary.json"
+          test -f "$GITHUB_WORKSPACE/os-scan-gate/trivy-version.txt"
 
       - name: Re-verify and load exact smoke-tested image
         shell: bash
@@ -265,7 +271,11 @@ jobs:
           test "$OS_CRITICAL_COUNT" = "0"
           python - <<'PY'
           import json
-          summary = json.load(open("os-scan/trivy-summary.json", encoding="utf-8"))
+          import os
+          from pathlib import Path
+
+          gate = Path(os.environ["GITHUB_WORKSPACE"]) / "os-scan-gate"
+          summary = json.loads((gate / "trivy-summary.json").read_text(encoding="utf-8"))
           if summary.get("ignoreFile") != "none" or summary.get("osResultCount", 0) < 1:
               raise SystemExit("release OS scan evidence is incomplete or suppressed")
           if summary.get("totals", {}).get("CRITICAL", 0) != 0:
