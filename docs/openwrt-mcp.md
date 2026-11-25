@@ -41,7 +41,7 @@ Successful transport/execution and a negative diagnostic result are not conflate
 
 Composite reads do not invent plausible values when a source is unavailable. `get_system_info` returns explicit partial/subsection state and uses `null` for unavailable uptime or memory values instead of zero. `get_device_dhcp_details` returns `null` for connection/reservation booleans when the corresponding authoritative source failed, and fails the operation when neither lease nor reservation source can be read. `get_router_context` propagates partial system state into its own partial flag. This is part of the v2 contract.
 
-`list_router_packages` reads `opkg` or, when `opkg` is absent, uses the installed-only APK JSON query. Unknown or invalid inventories are errors, not empty successes. Sampled outputs expose `truncated` when the collector clips the data it received; this flag does not establish completeness beyond the upstream collection window. Wi-Fi status reports observed interfaces, not a guessed repeater role.
+`list_router_packages` reads `opkg` or, when `opkg` is absent, uses the installed-only APK JSON query. Unknown or invalid inventories are errors, not empty successes. Sampled outputs expose `truncated` when the collector clips the data it received; this flag does not establish completeness beyond the upstream collection window. Wi-Fi status reports observed interfaces, not a guessed repeater role. `wifi_scan` reports `scan_source`, `cached`, and `freshness`; an `iw scan dump` fallback is explicitly marked as cached with unverified freshness and never aborts another scan.
 
 ## Deadlines, cancellation, and concurrency
 
