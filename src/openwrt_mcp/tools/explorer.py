@@ -289,7 +289,7 @@ class OpenWRTExplorer:
         }
 
     async def list_installed_packages(self) -> dict[str, Any]:
-        _, _, opkg_available = await self._run("command -v opkg")
+        _, opkg_probe_error, opkg_available = await self._run("command -v opkg")
         if opkg_available == 0:
             raw, _, code = await self._run("opkg list-installed")
             if code != 0:
@@ -323,8 +323,17 @@ class OpenWRTExplorer:
                 packages.append({"name": name, "version": version})
             return self._package_inventory_result("opkg", packages)
 
-        _, _, apk_available = await self._run("command -v apk")
+        _, apk_probe_error, apk_available = await self._run("command -v apk")
         if apk_available != 0:
+            if opkg_probe_error == apk_probe_error == "No SSH connection":
+                return {
+                    "success": False,
+                    "error": {
+                        "code": "UPSTREAM_FAILURE",
+                        "message": "SSH dependency unavailable",
+                        "retryable": False,
+                    },
+                }
             return {
                 "success": False,
                 "error": {

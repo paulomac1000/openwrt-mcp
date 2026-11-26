@@ -68,7 +68,7 @@ For stdio clients which do not need an HTTP health port, set `HEALTH_ENABLED=0`.
 
 ## Docker
 
-CI builds the wheel first, builds the image exactly once from that wheel plus the reviewed hashed runtime lockfile, smoke-tests that exact image, and exports it for later promotion. The image runs as UID 10001, uses `SIGINT` for graceful Docker stop, and installs no unconditional Docker healthcheck. See [deployment lifecycle](docs/deployment-lifecycle.md) for the required health ownership model.
+CI builds the wheel first, builds the image exactly once from that wheel plus the reviewed hashed runtime lockfile, smoke-tests that exact image, and exports it for later promotion. The image runs as UID 10001, uses `SIGTERM` as its Docker stop signal, and installs no unconditional Docker healthcheck. See [deployment lifecycle](docs/deployment-lifecycle.md) for the required health ownership model.
 
 ```bash
 # From an exact, clean source revision, with the locked development environment active:

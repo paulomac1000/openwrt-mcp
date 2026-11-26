@@ -263,3 +263,16 @@ async def test_list_router_packages_enforces_existing_response_budget(
     assert result.error is not None
     assert result.error.code == "RESPONSE_TOO_LARGE"
     assert result.data is None
+
+
+async def test_ssh_failure_is_not_reported_as_missing_manager(tmp_path: Path) -> None:
+    router, _ = explorer(
+        tmp_path,
+        {
+            "command -v opkg": ("", "No SSH connection", 1),
+            "command -v apk": ("", "No SSH connection", 1),
+        },
+    )
+    result = await router.list_installed_packages()
+    assert result["success"] is False
+    assert result["error"]["code"] == "UPSTREAM_FAILURE"

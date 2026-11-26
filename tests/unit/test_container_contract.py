@@ -9,7 +9,7 @@ def test_image_does_not_install_an_unconditional_healthcheck() -> None:
     assert not any(line.lstrip().startswith("HEALTHCHECK") for line in text.splitlines())
     assert 'CMD ["openwrt-mcp"]' in text
     assert "USER openwrt" in text
-    assert "STOPSIGNAL SIGINT" in text
+    assert "STOPSIGNAL SIGTERM" in text
 
 
 def test_deployment_documentation_separates_lifecycle_modes() -> None:

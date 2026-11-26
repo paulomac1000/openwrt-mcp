@@ -47,7 +47,7 @@ docker exec -i openwrt-mcp openwrt-mcp
 ```
 
 - PID1 owns container lifetime; each `docker exec` owns one MCP request process.
-- `unless-stopped` restores the supervisor after Docker/host restart unless the
+- `unless-stopped` restores the supervisor after Docker daemon or host restart unless the
   operator stopped it. Use `on-failure` only when that limited semantic is
   explicitly required.
 - Docker health is disabled because PID1 is intentionally not the MCP process.
@@ -65,7 +65,7 @@ Use only when an external supervisor genuinely consumes it:
 docker run -d --name openwrt-mcp-health \
   -e HEALTH_ENABLED=1 \
   -e HEALTH_PORT=9094 \
-  --health-cmd "python -c 'import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.getenv(\\\"HEALTH_PORT\\\", \\\"9094\\\")}/ready\", timeout=2).read()'" \
+  --health-cmd "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:9094/ready\", timeout=2).read()'" \
   ghcr.io/paulomac1000/openwrt-mcp:v2.0.1 openwrt-mcp
 ```
 
