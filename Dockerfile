@@ -40,10 +40,11 @@ RUN set -eu; \
     python -c 'import json, sys; print(json.dumps(dict(zip(("revision", "wheel_sha256", "version"), sys.argv[1:], strict=True))))' "$SOURCE_REVISION" "$WHEEL_SHA256" "$APP_VERSION" > /usr/local/share/openwrt-mcp/provenance.json; \
     rm -rf /tmp/requirements-runtime.lock /tmp/wheels
 
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint
+RUN chmod 0755 /usr/local/bin/docker-entrypoint
+
 USER openwrt
 STOPSIGNAL SIGTERM
-# The image intentionally installs no HEALTHCHECK. Container lifetime is owned
-# by the deployment mode (ephemeral stdio or supervised exec container); a
-# Docker probe may be enabled only when HEALTH_ENABLED=1 and only for the
-# loopback HTTP listener. It must never synthesize MCP/router readiness.
-CMD ["openwrt-mcp"]
+# No image HEALTHCHECK: Docker probes cannot truthfully represent stdio MCP or
+# router readiness. Deployment mode owns container and readiness lifecycle.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]

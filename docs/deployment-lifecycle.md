@@ -56,17 +56,22 @@ docker exec -i openwrt-mcp openwrt-mcp
   call; it is not implied by container or process liveness.
 - Configure all mounts, user/group identity, SSH known hosts, target, and
   network before cutover. Do not publish ports.
+- Each `docker exec` is a separate application process with its own target
+  lock. Multiple simultaneous clients therefore are **not** serialized across
+  sessions; use at most one active MCP client per managed container unless an
+  external serialization boundary is reviewed and deployed.
 
 ## C. Optional loopback HTTP health listener
 
 Use only when an external supervisor genuinely consumes it:
 
 ```bash
-docker run -d -i --name openwrt-mcp-health \
+docker run -d --name openwrt-mcp-health \
   -e HEALTH_ENABLED=1 \
   -e HEALTH_PORT=9094 \
   --health-cmd "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:9094/ready\", timeout=2).read()'" \
-  ghcr.io/paulomac1000/openwrt-mcp:v2.0.1 openwrt-mcp
+  ghcr.io/paulomac1000/openwrt-mcp:v2.0.1 \
+  sh -c 'sleep infinity | openwrt-mcp'
 ```
 
 - `/live` proves listener/process liveness only.
@@ -75,8 +80,8 @@ docker run -d -i --name openwrt-mcp-health \
 - Do not expose the health port. REST and SSE remain unsupported.
 - If `HEALTH_ENABLED=0`, do not configure a Docker probe. There is no truthful
   image-level substitute for MCP protocol readiness.
-- Because `-i` keeps the stdio server alive, the operator stops and removes
-  this container when the optional health mode is no longer needed.
+- The infinite pipe keeps stdio open for the optional listener; the operator
+  stops and removes this container when that mode is no longer needed.
 
 ## Ownership boundary
 
