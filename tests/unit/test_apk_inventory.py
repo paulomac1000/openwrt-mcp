@@ -276,3 +276,28 @@ async def test_ssh_failure_is_not_reported_as_missing_manager(tmp_path: Path) ->
     result = await router.list_installed_packages()
     assert result["success"] is False
     assert result["error"]["code"] == "UPSTREAM_FAILURE"
+
+
+@pytest.mark.parametrize(
+    ("probe_code", "probe_error"),
+    [
+        (124, "Timeout after 30s"),
+        (125, "SSH connection lost during read; command was not replayed"),
+        (126, "Remote output exceeded 1048576-byte safety limit"),
+        (130, "Operation cancelled"),
+        (1, "No SSH connection"),
+    ],
+)
+async def test_probe_transport_failure_is_not_missing_manager(
+    tmp_path: Path, probe_code: int, probe_error: str
+) -> None:
+    router, _ = explorer(
+        tmp_path,
+        {
+            "command -v opkg": ("", probe_error, probe_code),
+            "command -v apk": ("", probe_error, probe_code),
+        },
+    )
+    result = await router.list_installed_packages()
+    assert result["success"] is False
+    assert result["error"]["code"] == "UPSTREAM_FAILURE"

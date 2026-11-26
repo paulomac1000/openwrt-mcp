@@ -290,6 +290,15 @@ class OpenWRTExplorer:
 
     async def list_installed_packages(self) -> dict[str, Any]:
         _, opkg_probe_error, opkg_available = await self._run("command -v opkg")
+        if self._manager_probe_failed(opkg_available, opkg_probe_error):
+            return {
+                "success": False,
+                "error": {
+                    "code": "UPSTREAM_FAILURE",
+                    "message": "Package manager probe failed",
+                    "retryable": False,
+                },
+            }
         if opkg_available == 0:
             raw, _, code = await self._run("opkg list-installed")
             if code != 0:
@@ -324,16 +333,16 @@ class OpenWRTExplorer:
             return self._package_inventory_result("opkg", packages)
 
         _, apk_probe_error, apk_available = await self._run("command -v apk")
+        if self._manager_probe_failed(apk_available, apk_probe_error):
+            return {
+                "success": False,
+                "error": {
+                    "code": "UPSTREAM_FAILURE",
+                    "message": "Package manager probe failed",
+                    "retryable": False,
+                },
+            }
         if apk_available != 0:
-            if opkg_probe_error == apk_probe_error == "No SSH connection":
-                return {
-                    "success": False,
-                    "error": {
-                        "code": "UPSTREAM_FAILURE",
-                        "message": "SSH dependency unavailable",
-                        "retryable": False,
-                    },
-                }
             return {
                 "success": False,
                 "error": {
@@ -378,6 +387,16 @@ class OpenWRTExplorer:
                 }
             packages.append({"name": fields[0], "version": fields[1]})
         return self._package_inventory_result("apk", packages)
+
+    @staticmethod
+    def _manager_probe_failed(code: int, error: str) -> bool:
+        """Return true only when detection failed rather than found no binary.
+
+        POSIX `command -v` confirms absence with status 1 and no diagnostic.
+        Timeout, cancellation, transport loss, output overflow, and SSH setup
+        failures are probe failures, not proof that both managers are absent.
+        """
+        return code not in {0, 1} or bool(error)
 
     @staticmethod
     def _package_inventory_result(manager: str, packages: list[dict[str, str]]) -> dict[str, Any]:

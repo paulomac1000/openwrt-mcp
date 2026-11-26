@@ -62,7 +62,7 @@ docker exec -i openwrt-mcp openwrt-mcp
 Use only when an external supervisor genuinely consumes it:
 
 ```bash
-docker run -d --name openwrt-mcp-health \
+docker run -d -i --name openwrt-mcp-health \
   -e HEALTH_ENABLED=1 \
   -e HEALTH_PORT=9094 \
   --health-cmd "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:9094/ready\", timeout=2).read()'" \
@@ -75,6 +75,8 @@ docker run -d --name openwrt-mcp-health \
 - Do not expose the health port. REST and SSE remain unsupported.
 - If `HEALTH_ENABLED=0`, do not configure a Docker probe. There is no truthful
   image-level substitute for MCP protocol readiness.
+- Because `-i` keeps the stdio server alive, the operator stops and removes
+  this container when the optional health mode is no longer needed.
 
 ## Ownership boundary
 
