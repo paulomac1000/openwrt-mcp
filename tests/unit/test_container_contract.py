@@ -10,6 +10,14 @@ def test_image_has_no_unconditional_healthcheck_and_correct_stop_signal() -> Non
     assert 'ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]' in dockerfile
 
 
+def test_ci_smokes_exact_container_through_default_entrypoint() -> None:
+    workflow = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    normalized = " ".join(workflow.replace("\\\n", " ").split())
+    assert "python -m openwrt_mcp.artifact_smoke -- docker run --rm --init -i" in normalized
+
+
 def test_entrypoint_uses_exec_for_supervisor_and_ephemeral_stdio() -> None:
     entrypoint = (Path(__file__).resolve().parents[2] / "docker-entrypoint.sh").read_text(
         encoding="utf-8"
