@@ -1,25 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Explicit supervisor commands own their own lifecycle (e.g. `sleep infinity`
+# for an exec container). Otherwise exec the request-scoped stdio server so it
+# directly owns stdin/stdout and receives Docker's stop signal.
 if [ "$#" -gt 0 ]; then
     exec "$@"
 fi
-
-child=
-terminate() {
-    [ -n "$child" ] || exit 143
-    kill -TERM "$child" 2>/dev/null || true
-    n=0
-    while kill -0 "$child" 2>/dev/null && [ "$n" -lt 10 ]; do
-        sleep 0.1
-        n=$((n + 1))
-    done
-    kill -KILL "$child" 2>/dev/null || true
-    wait "$child" 2>/dev/null || true
-    exit 143
-}
-trap terminate TERM
-
-openwrt-mcp &
-child=$!
-wait "$child"
+exec openwrt-mcp

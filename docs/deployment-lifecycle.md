@@ -29,7 +29,7 @@ docker run --rm --init -i \
 ```
 
 - Container lifetime equals MCP client lifetime.
-- PID1 is the MCP server; EOF is a normal clean shutdown.
+- The entrypoint execs the MCP server, so PID1 owns stdin/stdout and receives the stop signal directly; EOF is a normal clean shutdown.
 - `HEALTH_ENABLED=0` prevents loopback port collisions.
 - No Docker healthcheck is applicable. Readiness is the client's successful
   MCP initialize and a read-only tool result.
@@ -71,13 +71,15 @@ docker run -d --name openwrt-mcp-health \
   -e HEALTH_PORT=9094 \
   --health-cmd "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:9094/ready\", timeout=2).read()'" \
   ghcr.io/paulomac1000/openwrt-mcp:v2.0.1 \
-  sh -c 'sleep infinity | openwrt-mcp'
+  sh -c 'mkfifo /tmp/mcp-in; sleep infinity >/tmp/mcp-in & exec openwrt-mcp </tmp/mcp-in'
 ```
 
 - `/live` proves listener/process liveness only.
 - `/ready` additionally runs a bounded private router probe; it must not expose
   data and must never be a tool transport.
 - Do not expose the health port. REST and SSE remain unsupported.
+- The infinite FIFO writer keeps stdio open; the operator stops and removes
+  this container when optional health mode is no longer needed.
 - If `HEALTH_ENABLED=0`, do not configure a Docker probe. There is no truthful
   image-level substitute for MCP protocol readiness.
 - The infinite pipe keeps stdio open for the optional listener; the operator
