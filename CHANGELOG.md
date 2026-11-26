@@ -1,6 +1,16 @@
 # Changelog
 
+## [2.0.2] — 2026-11-26
+
+### Release integrity correction
+
+- made v2.0.2 the canonical successor to the inconsistent v2.0.1 publication; the v2.0.1 tag and original CI artifacts remain immutable history, while its corrected operational digest remains the supported rollback target
+- strengthened exact-container CI smoke to drive the default entrypoint with `docker run --rm --init -i` and complete official MCP initialize, `tools/list`, tool calls, and EOF shutdown for modern and legacy protocol revisions
+- preserved the v2.0.1 APK/opkg compatibility fixes, read-only capability profile, stdio transport, lifecycle contract, dependency pins, and security boundaries without functional changes
+
 ## [2.0.1] — 2026-11-26
+
+Superseded by v2.0.2 because the original tag target and the corrected operational artifacts did not share one release identity. Do not deploy the initial defective digest; use the recorded corrected v2.0.1 digest only for rollback.
 
 ### Maintenance release
 
