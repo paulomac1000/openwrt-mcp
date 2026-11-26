@@ -11,7 +11,7 @@ verification: Inspect the exact image config and run the documented ephemeral, m
 
 # Deployment lifecycle and health ownership
 
-OpenWRT MCP v2.0.1 intentionally installs **no image `HEALTHCHECK`**. A stdio
+OpenWRT MCP v2.0.2 intentionally installs **no image `HEALTHCHECK`**. A stdio
 server is request-scoped, while a container may be request-scoped or supervised;
 one unconditional probe cannot truthfully cover both modes.
 
@@ -25,7 +25,7 @@ docker run --rm --init -i \
   -e OPENWRT_KNOWN_HOSTS=/app/keys/known_hosts \
   -e HEALTH_ENABLED=0 \
   -v /secure/keys:/app/keys:ro \
-  ghcr.io/paulomac1000/openwrt-mcp:v2.0.1
+  ghcr.io/paulomac1000/openwrt-mcp:v2.0.2
 ```
 
 - Container lifetime equals MCP client lifetime.
@@ -42,7 +42,7 @@ docker run -d \
   --restart unless-stopped \
   -e HEALTH_ENABLED=0 \
   --no-healthcheck \
-  ghcr.io/paulomac1000/openwrt-mcp:v2.0.1 sleep infinity
+  ghcr.io/paulomac1000/openwrt-mcp:v2.0.2 sleep infinity
 docker exec -i openwrt-mcp openwrt-mcp
 ```
 
@@ -70,7 +70,7 @@ docker run -d --name openwrt-mcp-health \
   -e HEALTH_ENABLED=1 \
   -e HEALTH_PORT=9094 \
   --health-cmd "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:9094/ready\", timeout=2).read()'" \
-  ghcr.io/paulomac1000/openwrt-mcp:v2.0.1 \
+  ghcr.io/paulomac1000/openwrt-mcp:v2.0.2 \
   sh -c 'mkfifo /tmp/mcp-in; sleep infinity >/tmp/mcp-in & exec openwrt-mcp </tmp/mcp-in'
 ```
 
