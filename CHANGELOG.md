@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1] — 2026-11-26
+
+### Maintenance release
+
+- fixed `list_router_packages` on OpenWrt APK targets by detecting the installed manager and using the unambiguous `apk list --installed --manifest` output; malformed opkg/APK inventories and missing managers now return typed failures instead of unknown versions or empty successes
+- removed the unconditional Docker image `HEALTHCHECK`; documented ephemeral stdio, supervised exec-container, and optional loopback-health deployment modes with explicit container/process/MCP/router readiness ownership
+- recommended `--restart unless-stopped` for managed exec containers so the supervisor returns after Docker/host restart unless an operator stopped it
+
 ## [2.0.0] — 2026-08-09
 
 ### Breaking migration release

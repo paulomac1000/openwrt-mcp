@@ -68,7 +68,7 @@ For stdio clients which do not need an HTTP health port, set `HEALTH_ENABLED=0`.
 
 ## Docker
 
-CI builds the wheel first, builds the image exactly once from that wheel plus the reviewed hashed runtime lockfile, smoke-tests that exact image, and exports it for later promotion. The image runs as UID 10001, uses `SIGINT` for graceful Docker stop, and includes a loopback `/live` health check.
+CI builds the wheel first, builds the image exactly once from that wheel plus the reviewed hashed runtime lockfile, smoke-tests that exact image, and exports it for later promotion. The image runs as UID 10001, uses `SIGINT` for graceful Docker stop, and installs no unconditional Docker healthcheck. See [deployment lifecycle](docs/deployment-lifecycle.md) for the required health ownership model.
 
 ```bash
 # From an exact, clean source revision, with the locked development environment active:
@@ -88,6 +88,10 @@ test -z "$(git status --porcelain)" && test ! -e dist && (
 ```
 
 Run the container under an MCP host that attaches to its stdio. Mount the private key and known-hosts file read-only. For hardened deployments, also use a read-only root filesystem, drop Linux capabilities, set `no-new-privileges`, and provide writable storage only for `/tmp` and the audit-log location if audit logging is enabled.
+
+## Deployment lifecycle
+
+Use ephemeral stdio for normal MCP clients. Managed exec containers require a supervisor PID1 and no Docker healthcheck unless the optional loopback health listener is intentionally enabled. See [`docs/deployment-lifecycle.md`](docs/deployment-lifecycle.md); Docker health is never MCP or router readiness.
 
 ## Capability and input policy
 

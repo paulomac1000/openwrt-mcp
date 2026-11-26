@@ -55,9 +55,10 @@ async def test_apk_inventory_uses_unambiguous_name_and_version(tmp_path: Path) -
     router = explorer(
         tmp_path,
         {
-            "opkg list-installed": ("", "", 127),
-            "apk --installed query --fields name,version --format json '*'": (
-                '[{"name":"package-2-tools","version":"6.12.66-1"}]',
+            "command -v opkg": ("", "", 1),
+            "command -v apk": ("/usr/bin/apk", "", 0),
+            "apk list --installed --manifest": (
+                "package-2-tools 6.12.66-1\n",
                 "",
                 0,
             ),
@@ -206,6 +207,7 @@ async def test_config_packages_and_log_error_and_filter_paths(tmp_path: Path) ->
         tmp_path,
         {
             "uci show network": ("", "no config", 1),
+            "command -v opkg": ("/usr/bin/opkg", "", 0),
             "opkg list-installed": ("", "opkg error", 1),
             "logread -l 10": ("info one\nERROR two\nwarning three", "", 0),
             "logread -l 500": ("alpha\nbeta alpha\ngamma", "", 0),

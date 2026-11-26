@@ -157,6 +157,7 @@ jobs:
             -e OPENWRT_SMOKE_WHEEL_SHA256="$(cut -d ' ' -f1 wheel.sha256)" \
             "openwrt-mcp:ci-$CANDIDATE_SHA" \
             python -m openwrt_mcp.artifact_smoke
+          test "$(docker image inspect "openwrt-mcp:ci-$CANDIDATE_SHA" --format '{{if .Config.Healthcheck}}present{{else}}absent{{end}}')" = absent
 
       - name: Export exact smoke-tested image and evidence
         shell: bash

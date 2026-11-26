@@ -74,6 +74,7 @@ class FakeSSH:
                 "",
                 0,
             ),
+            "command -v opkg": ("/usr/bin/opkg", "", 0),
             "opkg list-installed": ("base-files - 1\nbusybox - 2", "", 0),
             "logread -l 20": ("dnsmasq DHCPACK 192.0.2.2 client", "", 0),
             "logread -l 50": ("dnsmasq DHCPACK 192.0.2.2 client", "", 0),

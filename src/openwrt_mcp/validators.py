@@ -60,7 +60,8 @@ class SecurityValidator:
         r"^nslookup [\w.:-]+(?: [\w.:-]+)?$",
         r"^traceroute(?: -n)? [\w.:-]+$",
         r"^opkg (?:list|list-installed|list-upgradable)$",
-        r"^apk --installed query --fields name,version --format json '\*'$",
+        r"^command -v (?:opkg|apk)$",
+        r"^apk list --installed --manifest$",
         r"^opkg (?:info|search) [a-zA-Z0-9._-]+$",
     ]
 

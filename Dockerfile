@@ -42,6 +42,8 @@ RUN set -eu; \
 
 USER openwrt
 STOPSIGNAL SIGINT
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\"HEALTH_PORT\", \"9094\")}/live', timeout=2).read()"]
+# The image intentionally installs no HEALTHCHECK. Container lifetime is owned
+# by the deployment mode (ephemeral stdio or supervised exec container); a
+# Docker probe may be enabled only when HEALTH_ENABLED=1 and only for the
+# loopback HTTP listener. It must never synthesize MCP/router readiness.
 CMD ["openwrt-mcp"]
