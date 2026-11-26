@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -184,3 +185,82 @@ def test_main_always_stops_auxiliary_services(
         "health-shutdown",
         "health-close",
     ]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX signal test")
+@pytest.mark.integration
+def test_sigterm_stops_health_server_and_releases_port(tmp_path: Path) -> None:
+    """A deployment stop signal must run the same cleanup path as server errors."""
+    import http.client
+    import os
+    import signal
+    import socket
+    import subprocess
+    import sys
+    import time
+
+    root = Path(__file__).resolve().parents[2]
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    env = {
+        "PATH": os.environ["PATH"],
+        "PYTHONPATH": str(root / "src"),
+        "OPENWRT_MOCK_MODE": "1",
+        "MCP_TRANSPORT": "stdio",
+        "HEALTH_ENABLED": "1",
+        "HEALTH_PORT": str(port),
+        "LOG_LEVEL": "WARNING",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    process = subprocess.Popen(
+        [sys.executable, "-m", "openwrt_mcp"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        last_error: Exception | None = None
+        while time.monotonic() < deadline:
+            try:
+                client = http.client.HTTPConnection("127.0.0.1", port, timeout=0.5)
+                client.request("GET", "/live")
+                response = client.getresponse()
+                response.read()
+                ready = response.status == 200
+                client.close()
+                if ready:
+                    break
+            except OSError as exc:
+                last_error = exc
+            time.sleep(0.1)
+        else:
+            raise AssertionError(f"health listener did not start: {last_error}")
+
+        process.send_signal(signal.SIGTERM)
+        return_code = process.wait(timeout=5)
+        # The stateless stdio process has no transaction to roll back; Docker's
+        # SIGTERM stop is correct only when PID1 terminates and the loopback
+        # listener disappears. Do not synthesize a clean-exit code.
+        assert return_code == -signal.SIGTERM, return_code
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                client = http.client.HTTPConnection("127.0.0.1", port, timeout=0.25)
+                client.request("GET", "/live")
+                client.getresponse().read()
+                client.close()
+            except OSError:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("health listener remained after SIGTERM")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=2)

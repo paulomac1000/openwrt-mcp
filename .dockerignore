@@ -1,6 +1,7 @@
 # Production image builds are allowlisted to the exact runtime lock and prebuilt wheel.
 *
 !Dockerfile
+!docker-entrypoint.sh
 !requirements-runtime.lock
 !dist/
 !dist/*.whl

@@ -41,7 +41,7 @@ Successful transport/execution and a negative diagnostic result are not conflate
 
 Composite reads do not invent plausible values when a source is unavailable. `get_system_info` returns explicit partial/subsection state and uses `null` for unavailable uptime or memory values instead of zero. `get_device_dhcp_details` returns `null` for connection/reservation booleans when the corresponding authoritative source failed, and fails the operation when neither lease nor reservation source can be read. `get_router_context` propagates partial system state into its own partial flag. This is part of the v2 contract.
 
-`list_router_packages` reads `opkg` or, when `opkg` is absent, uses the installed-only APK JSON query. Unknown or invalid inventories are errors, not empty successes. Sampled outputs expose `truncated` when the collector clips the data it received; this flag does not establish completeness beyond the upstream collection window. Wi-Fi status reports observed interfaces, not a guessed repeater role. `wifi_scan` reports `scan_source`, `cached`, and `freshness`; `iw` results carry unverified freshness, `iw scan dump` results are also marked cached, and the fallback never aborts another scan.
+`list_router_packages` detects an installed manager with `command -v` and reads `opkg list-installed` or the unambiguous `apk list --installed --manifest` output. Unknown or invalid inventories are errors, not empty successes. Sampled outputs expose `truncated` when the collector clips the data it received; this flag does not establish completeness beyond the upstream collection window. Wi-Fi status reports observed interfaces, not a guessed repeater role. `wifi_scan` reports `scan_source`, `cached`, and `freshness`; `iw` results carry unverified freshness, `iw scan dump` results are also marked cached, and the fallback never aborts another scan.
 
 ## Deadlines, cancellation, and concurrency
 
@@ -71,13 +71,13 @@ Dormant write-domain code refuses write execution without host-key verification 
 
 `requirements-runtime.lock` and `requirements-dev.lock` are reviewed, committed pip-compile outputs with hashes. Ordinary CI consumes those committed locks without re-resolving the dependency graph. Lock regeneration is an explicit maintenance action. The build backend is pinned and the wheel is built with `--no-isolation` from the locked environment.
 
-CI tests the exact wheel, builds the container once from that wheel plus the reviewed runtime lock, smoke-tests that exact image, and exports a closed image archive with checksums and source-revision metadata. The exact-artifact stdio smoke launches the child with an explicit environment allowlist plus only the required MCP/mock variables; it does not inherit the complete CI environment. The image is non-root, has an OCI source revision, uses `SIGINT` for graceful Docker stop, and contains a loopback liveness health check. Publishing consumes the exact successful `main` CI artifact, verifies its checksum and OCI revision label, and promotes the loaded image without source checkout or rebuild.
+CI tests the exact wheel, builds the container once from that wheel plus the reviewed runtime lock, smoke-tests that exact image, and exports a closed image archive with checksums and source-revision metadata. The exact-artifact stdio smoke launches the child with an explicit environment allowlist plus only the required MCP/mock variables; it does not inherit the complete CI environment. The image is non-root, has an OCI source revision, uses `SIGINT` for graceful Docker stop, and intentionally contains no unconditional Docker healthcheck; see `docs/deployment-lifecycle.md`. Publishing consumes the exact successful `main` CI artifact, verifies its checksum and OCI revision label, and promotes the loaded image without source checkout or rebuild.
 
 The CI workflow runs on pull requests and on `main` pushes. Feature-branch `push` is not a second authoritative trigger, avoiding duplicate expensive wheel/container pipelines for the same PR revision.
 
 The image build requires a full source revision, package version, and wheel SHA-256. It verifies the wheel bytes and checks the installed package metadata against the runtime and expected versions. Readiness and capability discovery report the image's installed provenance record; an installation without that record reports unknown revision and wheel digest. Use release evidence to bind the record to the published image digest.
 
-## Migrate a local 1.4.0 deployment to 2.0.0
+## Migrate a local 1.4.0 deployment to 2.0.x
 
 OpenCode and other local stdio clients can keep their process-based launch model. Clients that use REST/SSE or send a tool-level timeout must change their configuration before switching. Do not publish ports for MCP; the optional health listener is loopback-only and is not a tool transport.
 

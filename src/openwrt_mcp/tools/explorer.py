@@ -289,40 +289,129 @@ class OpenWRTExplorer:
         }
 
     async def list_installed_packages(self) -> dict[str, Any]:
-        raw, _, code = await self._run("opkg list-installed")
-        packages: list[dict[str, str]] = []
-        manager = "opkg"
-        if code == 0:
-            for line in raw.splitlines():
-                name, separator, version = line.partition(" - ")
-                if name.strip():
-                    packages.append(
-                        {
-                            "name": name.strip(),
-                            "version": version.strip() if separator else "unknown",
-                        }
-                    )
-        elif code == 127:
-            manager = "apk"
-            raw, _, code = await self._run(
-                "apk --installed query --fields name,version --format json '*'"
-            )
+        _, opkg_probe_error, opkg_available = await self._run("command -v opkg")
+        if self._manager_probe_failed(opkg_available, opkg_probe_error):
+            return {
+                "success": False,
+                "error": {
+                    "code": "UPSTREAM_FAILURE",
+                    "message": "Package manager probe failed",
+                    "retryable": False,
+                },
+            }
+        if opkg_available == 0:
+            raw, _, code = await self._run("opkg list-installed")
             if code != 0:
-                return {"success": False, "error": "Installed package inventory unavailable"}
-            try:
-                rows = json.loads(raw)
-            except ValueError:
-                rows = None
-            if not isinstance(rows, list):
-                return {"success": False, "error": "Invalid APK inventory"}
-            for row in rows:
-                match row:
-                    case {"name": str(name), "version": str(version)} if name and version:
-                        packages.append({"name": name, "version": version})
-                    case _:
-                        return {"success": False, "error": "Invalid APK inventory"}
-        else:
-            return {"success": False, "error": "Failed to list installed packages"}
+                return {
+                    "success": False,
+                    "error": {
+                        "code": "UPSTREAM_FAILURE",
+                        "message": "Failed to list installed packages",
+                        "retryable": False,
+                    },
+                }
+            packages: list[dict[str, str]] = []
+            for line in raw.splitlines():
+                if not line:
+                    continue
+                name, separator, version = line.partition(" - ")
+                if (
+                    not separator
+                    or not name
+                    or not version
+                    or any(character.isspace() for field in (name, version) for character in field)
+                ):
+                    return {
+                        "success": False,
+                        "error": {
+                            "code": "PACKAGE_INVENTORY_INVALID",
+                            "message": "Invalid package inventory",
+                            "retryable": False,
+                        },
+                    }
+                packages.append({"name": name, "version": version})
+            return self._package_inventory_result("opkg", packages)
+
+        _, apk_probe_error, apk_available = await self._run("command -v apk")
+        if self._manager_probe_failed(apk_available, apk_probe_error):
+            return {
+                "success": False,
+                "error": {
+                    "code": "UPSTREAM_FAILURE",
+                    "message": "Package manager probe failed",
+                    "retryable": False,
+                },
+            }
+        if apk_available != 0:
+            return {
+                "success": False,
+                "error": {
+                    "code": "PACKAGE_MANAGER_UNAVAILABLE",
+                    "message": "No supported package manager is installed",
+                    "retryable": False,
+                },
+            }
+
+        # APK's documented manifest form gives an unambiguous `name version`
+        # pair without splitting on package-name hyphens. It is supported by
+        # apk-tools 3 pre-release and stable manifest output.
+        raw, _, code = await self._run("apk list --installed --manifest")
+        if code != 0:
+            return {
+                "success": False,
+                "error": {
+                    "code": "UPSTREAM_FAILURE",
+                    "message": "Failed to list installed packages",
+                    "retryable": False,
+                },
+            }
+
+        packages = []
+        for line in raw.splitlines():
+            if not line:
+                continue
+            fields = line.rsplit(" ", 1)
+            if (
+                len(fields) != 2
+                or not fields[0]
+                or not fields[1]
+                or any(character.isspace() for field in fields for character in field)
+            ):
+                return {
+                    "success": False,
+                    "error": {
+                        "code": "PACKAGE_INVENTORY_INVALID",
+                        "message": "Invalid package inventory",
+                        "retryable": False,
+                    },
+                }
+            packages.append({"name": fields[0], "version": fields[1]})
+        return self._package_inventory_result("apk", packages)
+
+    @staticmethod
+    def _manager_probe_failed(code: int, error: str) -> bool:
+        """Return true when detection failed rather than found no binary.
+
+        POSIX `command -v` may confirm absence with status 1; BusyBox ash uses
+        status 127. Treat these as confirmed absence only when the wrapper did
+        not attach a transport/interruption diagnostic.
+        """
+        transport_markers = (
+            "No SSH connection",
+            "SSH connection lost",
+            "SSH command execution failed",
+            "Timeout after",
+            "Remote output exceeded",
+            "Operation cancelled",
+            "AMBIGUOUS_OUTCOME",
+        )
+        confirmed_absence = code in {1, 127} and not any(
+            marker in error for marker in transport_markers
+        )
+        return not (code == 0 or confirmed_absence)
+
+    @staticmethod
+    def _package_inventory_result(manager: str, packages: list[dict[str, str]]) -> dict[str, Any]:
         return {
             "success": True,
             "package_manager": manager,

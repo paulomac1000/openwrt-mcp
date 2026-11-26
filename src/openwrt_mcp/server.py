@@ -261,6 +261,8 @@ def main() -> None:
             len(app.kernel.registry.active()),
         )
         app.mcp.run(transport="stdio")
+    except KeyboardInterrupt:
+        logger.info("Server stop requested")
     finally:
         stop_event.set()
         if probe_thread is not None:

@@ -30,6 +30,7 @@ def main() -> int:
         "AGENTS.md",
         "docs/openwrt-mcp.md",
         "docs/production-acceptance.md",
+        "docs/deployment-lifecycle.md",
         env=environment,
     )
     run(python, "-m", "pytest", "-q", env=environment)
