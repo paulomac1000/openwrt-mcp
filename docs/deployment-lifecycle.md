@@ -37,7 +37,7 @@ docker run --rm --init -i \
 ## B. Managed named container for exec clients
 
 ```bash
-docker run -d \
+docker run -d --init \
   --name openwrt-mcp \
   --restart unless-stopped \
   -e HEALTH_ENABLED=0 \
@@ -46,6 +46,7 @@ docker run -d \
 docker exec -i openwrt-mcp openwrt-mcp
 ```
 
+- `--init` supplies PID1 signal handling so Docker's SIGTERM reaches the supervisor and stops the container cleanly instead of timing out into SIGKILL.
 - PID1 owns container lifetime; each `docker exec` owns one MCP request process.
 - `unless-stopped` restores the supervisor after Docker daemon or host restart unless the
   operator stopped it. Use `on-failure` only when that limited semantic is
@@ -66,7 +67,7 @@ docker exec -i openwrt-mcp openwrt-mcp
 Use only when an external supervisor genuinely consumes it:
 
 ```bash
-docker run -d --name openwrt-mcp-health \
+docker run -d --init --name openwrt-mcp-health \
   -e HEALTH_ENABLED=1 \
   -e HEALTH_PORT=9094 \
   --health-cmd "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:9094/ready\", timeout=2).read()'" \
