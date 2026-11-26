@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 import tempfile
 from collections.abc import Mapping
 from typing import Any, TextIO
@@ -28,10 +29,23 @@ _ALLOWED_CHILD_ENV = (
 )
 
 
-def _server_params() -> StdioServerParameters:
-    executable = shutil.which("openwrt-mcp")
-    if executable is None:
-        raise RuntimeError("installed openwrt-mcp console entry point was not found")
+def _command_argv(argv: list[str]) -> list[str]:
+    if argv and argv[0] == "--":
+        return argv[1:]
+    return argv
+
+
+def _server_params(server_argv: list[str] | None = None) -> StdioServerParameters:
+    command_argv = server_argv or []
+    if command_argv:
+        command = command_argv[0]
+        args = command_argv[1:]
+    else:
+        executable = shutil.which("openwrt-mcp")
+        if executable is None:
+            raise RuntimeError("installed openwrt-mcp console entry point was not found")
+        command = executable
+        args = []
     env = {key: value for key in _ALLOWED_CHILD_ENV if (value := os.environ.get(key)) is not None}
     env.update(
         {
@@ -41,7 +55,10 @@ def _server_params() -> StdioServerParameters:
             "LOG_LEVEL": "WARNING",
         }
     )
-    return StdioServerParameters(command=executable, args=[], env=env)
+    for key in ("OPENWRT_SMOKE_REVISION", "OPENWRT_SMOKE_WHEEL_SHA256"):
+        if (value := os.getenv(key)) is not None:
+            env[key] = value
+    return StdioServerParameters(command=command, args=args, env=env)
 
 
 def _assert_catalog_and_result(listing: Any, result: Any) -> None:
@@ -93,10 +110,10 @@ def _assert_provenance(result: Any) -> None:
         raise RuntimeError("stdio capability provenance does not match expected artifact")
 
 
-async def _smoke_modern_stdio() -> None:
+async def _smoke_modern_stdio(params: StdioServerParameters) -> None:
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
         transport = stdio_client(
-            _server_params(),
+            params,
             errlog=errlog,
         )
         async with Client(transport) as client:
@@ -114,10 +131,10 @@ async def _smoke_modern_stdio() -> None:
         _assert_clean_stderr(errlog, mode="modern")
 
 
-async def _smoke_legacy_stdio() -> None:
+async def _smoke_legacy_stdio(params: StdioServerParameters) -> None:
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
         async with stdio_client(
-            _server_params(),
+            params,
             errlog=errlog,
         ) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
@@ -136,13 +153,14 @@ async def _smoke_legacy_stdio() -> None:
         _assert_clean_stderr(errlog, mode="legacy")
 
 
-async def _run() -> None:
-    await asyncio.wait_for(_smoke_modern_stdio(), timeout=30)
-    await asyncio.wait_for(_smoke_legacy_stdio(), timeout=30)
+async def _run(params: StdioServerParameters) -> None:
+    await asyncio.wait_for(_smoke_modern_stdio(params), timeout=30)
+    await asyncio.wait_for(_smoke_legacy_stdio(params), timeout=30)
 
 
-def main() -> int:
-    asyncio.run(_run())
+def main(argv: list[str] | None = None) -> int:
+    command_argv = _command_argv(list(sys.argv[1:] if argv is None else argv))
+    asyncio.run(_run(_server_params(command_argv)))
     print("official MCP stdio artifact smoke passed (modern + legacy)")
     return 0
 
