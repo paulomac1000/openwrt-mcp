@@ -390,13 +390,25 @@ class OpenWRTExplorer:
 
     @staticmethod
     def _manager_probe_failed(code: int, error: str) -> bool:
-        """Return true only when detection failed rather than found no binary.
+        """Return true when detection failed rather than found no binary.
 
-        POSIX `command -v` confirms absence with status 1 and no diagnostic.
-        Timeout, cancellation, transport loss, output overflow, and SSH setup
-        failures are probe failures, not proof that both managers are absent.
+        POSIX `command -v` may confirm absence with status 1; BusyBox ash uses
+        status 127. Treat these as confirmed absence only when the wrapper did
+        not attach a transport/interruption diagnostic.
         """
-        return code not in {0, 1} or bool(error)
+        transport_markers = (
+            "No SSH connection",
+            "SSH connection lost",
+            "SSH command execution failed",
+            "Timeout after",
+            "Remote output exceeded",
+            "Operation cancelled",
+            "AMBIGUOUS_OUTCOME",
+        )
+        confirmed_absence = code in {1, 127} and not any(
+            marker in error for marker in transport_markers
+        )
+        return not (code == 0 or confirmed_absence)
 
     @staticmethod
     def _package_inventory_result(manager: str, packages: list[dict[str, str]]) -> dict[str, Any]:

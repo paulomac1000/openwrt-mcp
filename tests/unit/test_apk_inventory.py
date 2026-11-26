@@ -179,8 +179,8 @@ async def test_missing_package_managers_are_typed_unavailable(tmp_path: Path) ->
     router, ssh = explorer(
         tmp_path,
         {
-            "command -v opkg": ("", "", 1),
-            "command -v apk": ("", "", 1),
+            "command -v opkg": ("", "", 127),
+            "command -v apk": ("", "", 127),
         },
     )
     result = await router.list_installed_packages()
@@ -296,6 +296,41 @@ async def test_probe_transport_failure_is_not_missing_manager(
         {
             "command -v opkg": ("", probe_error, probe_code),
             "command -v apk": ("", probe_error, probe_code),
+        },
+    )
+    result = await router.list_installed_packages()
+    assert result["success"] is False
+    assert result["error"]["code"] == "UPSTREAM_FAILURE"
+
+
+async def test_busybox_command_not_found_confirms_manager_absence(tmp_path: Path) -> None:
+    # Observed on the isolated OpenWrt 25.12.6 lab: ash emits status 127.
+    router, ssh = explorer(
+        tmp_path,
+        {
+            "command -v opkg": ("", "", 127),
+            "command -v apk": ("/usr/bin/apk", "", 0),
+            "apk list --installed --manifest": ("busybox 1.37.0-r4\n", "", 0),
+        },
+    )
+    result = await router.list_installed_packages()
+    assert result["success"] is True
+    assert result["package_manager"] == "apk"
+    assert result["packages_sample"] == [{"name": "busybox", "version": "1.37.0-r4"}]
+    assert ssh.commands == ["command -v opkg", "command -v apk", "apk list --installed --manifest"]
+
+
+@pytest.mark.parametrize(
+    "error", ["Timeout after 30s", "SSH connection lost", "Operation cancelled"]
+)
+async def test_busybox_absence_status_with_transport_error_is_failure(
+    tmp_path: Path, error: str
+) -> None:
+    router, _ = explorer(
+        tmp_path,
+        {
+            "command -v opkg": ("", error, 127),
+            "command -v apk": ("", error, 127),
         },
     )
     result = await router.list_installed_packages()
