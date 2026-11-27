@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import mcp
 import pytest
 
@@ -49,3 +51,32 @@ def test_explicit_command_separator_is_removed() -> None:
         "image",
     ]
     assert artifact_smoke._command_argv([]) == []
+
+
+def test_clean_exit_receipt_accepts_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipt = tmp_path / "exit-status"
+    receipt.write_text("0\n", encoding="utf-8")
+    monkeypatch.setenv("OPENWRT_SMOKE_EXIT_FILE", str(receipt))
+
+    artifact_smoke._assert_clean_exit()
+
+
+def test_clean_exit_receipt_rejects_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipt = tmp_path / "exit-status"
+    receipt.write_text("23\n", encoding="utf-8")
+    monkeypatch.setenv("OPENWRT_SMOKE_EXIT_FILE", str(receipt))
+
+    with pytest.raises(RuntimeError, match="exit status 23"):
+        artifact_smoke._assert_clean_exit()
+
+
+def test_clean_exit_receipt_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENWRT_SMOKE_EXIT_FILE", raising=False)
+
+    artifact_smoke._assert_clean_exit()

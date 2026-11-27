@@ -8,7 +8,9 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, TextIO
 
 from mcp import Client, ClientSession, StdioServerParameters
@@ -55,7 +57,11 @@ def _server_params(server_argv: list[str] | None = None) -> StdioServerParameter
             "LOG_LEVEL": "WARNING",
         }
     )
-    for key in ("OPENWRT_SMOKE_REVISION", "OPENWRT_SMOKE_WHEEL_SHA256"):
+    for key in (
+        "OPENWRT_SMOKE_REVISION",
+        "OPENWRT_SMOKE_WHEEL_SHA256",
+        "OPENWRT_SMOKE_EXIT_FILE",
+    ):
         if (value := os.getenv(key)) is not None:
             env[key] = value
     return StdioServerParameters(command=command, args=args, env=env)
@@ -90,6 +96,34 @@ def _assert_invalid_host_error(result: Any) -> None:
         raise RuntimeError(f"unexpected invalid-host error: {structured}")
 
 
+def _exit_receipt_path() -> Path | None:
+    value = os.getenv("OPENWRT_SMOKE_EXIT_FILE")
+    return Path(value) if value else None
+
+
+def _reset_exit_receipt() -> None:
+    path = _exit_receipt_path()
+    if path is not None:
+        path.unlink(missing_ok=True)
+
+
+def _assert_clean_exit() -> None:
+    path = _exit_receipt_path()
+    if path is None:
+        return
+    deadline = time.monotonic() + 5
+    while not path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not path.exists():
+        raise RuntimeError("stdio child did not write a clean-exit receipt")
+    try:
+        status = int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("stdio child wrote an invalid clean-exit receipt") from exc
+    if status != 0:
+        raise RuntimeError(f"stdio child exit status {status}")
+
+
 def _assert_clean_stderr(errlog: TextIO, *, mode: str) -> None:
     errlog.flush()
     errlog.seek(0)
@@ -111,6 +145,7 @@ def _assert_provenance(result: Any) -> None:
 
 
 async def _smoke_modern_stdio(params: StdioServerParameters) -> None:
+    _reset_exit_receipt()
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
         transport = stdio_client(
             params,
@@ -128,10 +163,12 @@ async def _smoke_modern_stdio(params: StdioServerParameters) -> None:
             _assert_catalog_and_result(listing, result)
             _assert_invalid_host_error(invalid)
             _assert_provenance(await client.call_tool("describe_router_capabilities", {}))
+        _assert_clean_exit()
         _assert_clean_stderr(errlog, mode="modern")
 
 
 async def _smoke_legacy_stdio(params: StdioServerParameters) -> None:
+    _reset_exit_receipt()
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
         async with stdio_client(
             params,
@@ -150,6 +187,7 @@ async def _smoke_legacy_stdio(params: StdioServerParameters) -> None:
                 _assert_catalog_and_result(listing, result)
                 _assert_invalid_host_error(invalid)
                 _assert_provenance(await session.call_tool("describe_router_capabilities", {}))
+        _assert_clean_exit()
         _assert_clean_stderr(errlog, mode="legacy")
 
 
