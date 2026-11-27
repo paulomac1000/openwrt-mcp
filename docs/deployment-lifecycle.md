@@ -15,6 +15,13 @@ OpenWRT MCP v2.0.2 intentionally installs **no image `HEALTHCHECK`**. A stdio
 server is request-scoped, while a container may be request-scoped or supervised;
 one unconditional probe cannot truthfully cover both modes.
 
+## Artifact identity
+
+The publish workflow produces an immutable `:sha-<commit>` tag and digest. The
+release process creates the `:vX.Y.Z` **release-created version alias** only
+after the digest and provenance are verified. Production clients should pin the
+verified `@sha256:` digest rather than rely on either mutable tag.
+
 ## A. Ephemeral stdio (preferred client mode)
 
 ```bash
@@ -29,7 +36,7 @@ docker run --rm --init -i \
 ```
 
 - Container lifetime equals MCP client lifetime.
-- The entrypoint execs the MCP server, so PID1 owns stdin/stdout and receives the stop signal directly; EOF is a normal clean shutdown.
+- The entrypoint execs the MCP server as the stdio child; with `--init`, init is PID1 and forwards Docker's stop signal to that child. EOF is a normal clean shutdown.
 - `HEALTH_ENABLED=0` prevents loopback port collisions.
 - No Docker healthcheck is applicable. Readiness is the client's successful
   MCP initialize and a read-only tool result.
@@ -90,8 +97,8 @@ docker run -d --init --name openwrt-mcp-health \
 
 | Signal | Owner |
 |---|---|
-| Container liveness | Docker/supervisor and PID1 |
-| MCP process liveness | the per-session process (or PID1 in ephemeral mode A) |
+| Container liveness | Docker, init (PID1), and the supervisor |
+| MCP process liveness | the per-session MCP child; init forwards signals to it |
 | MCP protocol readiness | MCP initialize and `tools/list` |
 | router dependency readiness | a bounded read-only router call |
 | Docker health (optional) | loopback HTTP listener in mode C only |
