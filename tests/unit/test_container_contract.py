@@ -10,6 +10,17 @@ def test_image_has_no_unconditional_healthcheck_and_correct_stop_signal() -> Non
     assert 'ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]' in dockerfile
 
 
+def test_ci_smokes_exact_container_through_default_entrypoint() -> None:
+    workflow = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    normalized = " ".join(workflow.replace("\\\n", " ").split())
+    assert "python -m openwrt_mcp.artifact_smoke -- sh -c" in normalized
+    assert "docker run --rm --init -i" in normalized
+    assert 'printf "%s\\n" "$status" > "$OPENWRT_SMOKE_EXIT_FILE"' in normalized
+    assert 'exit "$status"' in normalized
+
+
 def test_entrypoint_uses_exec_for_supervisor_and_ephemeral_stdio() -> None:
     entrypoint = (Path(__file__).resolve().parents[2] / "docker-entrypoint.sh").read_text(
         encoding="utf-8"
@@ -26,12 +37,15 @@ def test_deployment_documentation_separates_lifecycle_modes() -> None:
         encoding="utf-8"
     )
     assert "docker run --rm --init -i" in docs
+    assert "docker run -d --init --name openwrt-mcp" in docs
     assert "docker exec -i openwrt-mcp openwrt-mcp" in docs
     assert "HEALTH_ENABLED=0" in docs
     assert "HEALTH_ENABLED=1" in docs
     assert "--health-cmd" in docs
     assert "MCP protocol readiness" in docs
     assert "router dependency readiness" in docs
+    assert "init is PID1" in docs
+    assert "release-created version alias" in docs
     assert "REST" in docs and "SSE" in docs
 
 
@@ -40,7 +54,7 @@ def test_optional_health_mode_keeps_stdio_open_and_uses_valid_probe() -> None:
         encoding="utf-8"
     )
     health_block = docs.split("## C. Optional loopback HTTP health listener", 1)[1]
-    assert "docker run -d --name openwrt-mcp-health" in health_block
+    assert "docker run -d --init --name openwrt-mcp-health" in health_block
     assert "sleep infinity >/tmp/mcp-in" in health_block
     assert "exec openwrt-mcp </tmp/mcp-in" in health_block
     assert "the operator stops and removes" in health_block

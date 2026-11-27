@@ -11,9 +11,16 @@ verification: Inspect the exact image config and run the documented ephemeral, m
 
 # Deployment lifecycle and health ownership
 
-OpenWRT MCP v2.0.1 intentionally installs **no image `HEALTHCHECK`**. A stdio
+OpenWRT MCP v2.0.2 intentionally installs **no image `HEALTHCHECK`**. A stdio
 server is request-scoped, while a container may be request-scoped or supervised;
 one unconditional probe cannot truthfully cover both modes.
+
+## Artifact identity
+
+The publish workflow produces an immutable `:sha-<commit>` tag and digest. The
+release process creates the `:vX.Y.Z` **release-created version alias** only
+after the digest and provenance are verified. Production clients should pin the
+verified `@sha256:` digest rather than rely on either mutable tag.
 
 ## A. Ephemeral stdio (preferred client mode)
 
@@ -25,11 +32,11 @@ docker run --rm --init -i \
   -e OPENWRT_KNOWN_HOSTS=/app/keys/known_hosts \
   -e HEALTH_ENABLED=0 \
   -v /secure/keys:/app/keys:ro \
-  ghcr.io/paulomac1000/openwrt-mcp:v2.0.1
+  ghcr.io/paulomac1000/openwrt-mcp:v2.0.2
 ```
 
 - Container lifetime equals MCP client lifetime.
-- The entrypoint execs the MCP server, so PID1 owns stdin/stdout and receives the stop signal directly; EOF is a normal clean shutdown.
+- The entrypoint execs the MCP server as the stdio child; with `--init`, init is PID1 and forwards Docker's stop signal to that child. EOF is a normal clean shutdown.
 - `HEALTH_ENABLED=0` prevents loopback port collisions.
 - No Docker healthcheck is applicable. Readiness is the client's successful
   MCP initialize and a read-only tool result.
@@ -37,15 +44,16 @@ docker run --rm --init -i \
 ## B. Managed named container for exec clients
 
 ```bash
-docker run -d \
+docker run -d --init \
   --name openwrt-mcp \
   --restart unless-stopped \
   -e HEALTH_ENABLED=0 \
   --no-healthcheck \
-  ghcr.io/paulomac1000/openwrt-mcp:v2.0.1 sleep infinity
+  ghcr.io/paulomac1000/openwrt-mcp:v2.0.2 sleep infinity
 docker exec -i openwrt-mcp openwrt-mcp
 ```
 
+- `--init` supplies PID1 signal handling so Docker's SIGTERM reaches the supervisor and stops the container cleanly instead of timing out into SIGKILL.
 - PID1 owns container lifetime; each `docker exec` owns one MCP request process.
 - `unless-stopped` restores the supervisor after Docker daemon or host restart unless the
   operator stopped it. Use `on-failure` only when that limited semantic is
@@ -66,11 +74,11 @@ docker exec -i openwrt-mcp openwrt-mcp
 Use only when an external supervisor genuinely consumes it:
 
 ```bash
-docker run -d --name openwrt-mcp-health \
+docker run -d --init --name openwrt-mcp-health \
   -e HEALTH_ENABLED=1 \
   -e HEALTH_PORT=9094 \
   --health-cmd "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:9094/ready\", timeout=2).read()'" \
-  ghcr.io/paulomac1000/openwrt-mcp:v2.0.1 \
+  ghcr.io/paulomac1000/openwrt-mcp:v2.0.2 \
   sh -c 'mkfifo /tmp/mcp-in; sleep infinity >/tmp/mcp-in & exec openwrt-mcp </tmp/mcp-in'
 ```
 
@@ -89,8 +97,8 @@ docker run -d --name openwrt-mcp-health \
 
 | Signal | Owner |
 |---|---|
-| Container liveness | Docker/supervisor and PID1 |
-| MCP process liveness | the per-session process (or PID1 in ephemeral mode A) |
+| Container liveness | Docker, init (PID1), and the supervisor |
+| MCP process liveness | the per-session MCP child; init forwards signals to it |
 | MCP protocol readiness | MCP initialize and `tools/list` |
 | router dependency readiness | a bounded read-only router call |
 | Docker health (optional) | loopback HTTP listener in mode C only |
