@@ -155,15 +155,21 @@ jobs:
           image="openwrt-mcp:ci-$CANDIDATE_SHA"
           export OPENWRT_SMOKE_REVISION="$CANDIDATE_SHA"
           export OPENWRT_SMOKE_WHEEL_SHA256="$(cut -d ' ' -f1 wheel.sha256)"
+          export OPENWRT_SMOKE_EXIT_FILE="$RUNNER_TEMP/openwrt-container-smoke-exit"
           python -m openwrt_mcp.artifact_smoke -- \
-            docker run --rm --init -i --network none \
-            -e OPENWRT_SMOKE_REVISION \
-            -e OPENWRT_SMOKE_WHEEL_SHA256 \
-            -e OPENWRT_MOCK_MODE=1 \
-            -e MCP_TRANSPORT=stdio \
-            -e HEALTH_ENABLED=0 \
-            -e LOG_LEVEL=WARNING \
-            "$image"
+            sh -c '
+              docker run --rm --init -i --network none \
+                -e OPENWRT_SMOKE_REVISION \
+                -e OPENWRT_SMOKE_WHEEL_SHA256 \
+                -e OPENWRT_MOCK_MODE=1 \
+                -e MCP_TRANSPORT=stdio \
+                -e HEALTH_ENABLED=0 \
+                -e LOG_LEVEL=WARNING \
+                "$1"
+              status=$?
+              printf "%s\n" "$status" > "$OPENWRT_SMOKE_EXIT_FILE"
+              exit "$status"
+            ' sh "$image"
           test "$(docker image inspect "$image" --format '{{if .Config.Healthcheck}}present{{else}}absent{{end}}')" = absent
 
       - name: Export exact smoke-tested image and evidence

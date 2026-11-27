@@ -15,7 +15,10 @@ def test_ci_smokes_exact_container_through_default_entrypoint() -> None:
         encoding="utf-8"
     )
     normalized = " ".join(workflow.replace("\\\n", " ").split())
-    assert "python -m openwrt_mcp.artifact_smoke -- docker run --rm --init -i" in normalized
+    assert "python -m openwrt_mcp.artifact_smoke -- sh -c" in normalized
+    assert "docker run --rm --init -i" in normalized
+    assert 'printf "%s\\n" "$status" > "$OPENWRT_SMOKE_EXIT_FILE"' in normalized
+    assert 'exit "$status"' in normalized
 
 
 def test_entrypoint_uses_exec_for_supervisor_and_ephemeral_stdio() -> None:
@@ -41,6 +44,8 @@ def test_deployment_documentation_separates_lifecycle_modes() -> None:
     assert "--health-cmd" in docs
     assert "MCP protocol readiness" in docs
     assert "router dependency readiness" in docs
+    assert "init is PID1" in docs
+    assert "release-created version alias" in docs
     assert "REST" in docs and "SSE" in docs
 
 
