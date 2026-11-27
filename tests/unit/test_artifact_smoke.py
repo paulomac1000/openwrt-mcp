@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import mcp
 import pytest
 
-from openwrt_mcp import artifact_smoke
+if getattr(mcp, "__test_fake__", False):
+    pytest.skip("official MCP SDK unavailable locally", allow_module_level=True)
+
+from openwrt_mcp import artifact_smoke  # noqa: E402
 
 
 def test_explicit_server_argv_is_preserved_for_container_smoke() -> None:
